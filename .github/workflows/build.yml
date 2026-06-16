@@ -1,0 +1,50 @@
+name: Windows EXE Build
+
+# Ne zaman çalışır:
+#  - main/master'a her push'ta
+#  - elle "Run workflow" ile (workflow_dispatch)
+#  - v* etiketi (tag) push edildiğinde → otomatik Release oluşturur
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Depoyu çek
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Bağımlılıkları yükle
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: EXE derle
+        run: pyinstaller PVDOC.spec --noconfirm
+
+      - name: EXE'yi artifact olarak yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: PV-DOC-windows
+          path: dist/PV-DOC.exe
+          if-no-files-found: error
+
+      # Sadece v* tag push edilince: dist/PV-DOC.exe'yi Release'e ekler.
+      - name: Release oluştur (yalnızca tag'de)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PV-DOC.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -80,6 +80,18 @@ QHeaderView::section {{
     font-weight: 600;
 }}
 QTableWidget::item:selected {{ background-color: rgba(88,166,255,0.25); }}
+/* Tablo içi düzenleme editörü: OPAK zemin + sıfır kenar.
+   Aksi halde altdaki item metni editörün arkasından görünüp 'üst üste binme'
+   izlenimi verir. */
+QTableWidget QLineEdit, QTableWidget QAbstractItemView {{
+    background-color: #1a2029;
+    color: #ffffff;
+    border: 1px solid rgba(88,166,255,0.7);
+    border-radius: 0px;
+    padding: 2px 4px;
+    margin: 0px;
+    selection-background-color: rgba(88,166,255,0.5);
+}}
 
 QCheckBox {{ color: #e6edf3; spacing: 7px; }}
 QCheckBox::indicator {{

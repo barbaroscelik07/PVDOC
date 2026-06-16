@@ -99,8 +99,14 @@ class GenelBilgiModulu(QWidget):
 
     def _urun_degisti(self, t: str) -> None:
         self.proje.dokuman.urun_adi = t
-        # Seri tablosundaki ürün ismi sütununu boşsa otomatik doldurmak için
-        # kullanıcıya bırakıyoruz; sadece veriyi güncelliyoruz.
+        # Ürün adı yazıldıkça Kapsanan Ürünler tablosundaki 3 satırın
+        # "Ürün İsmi" sütununu otomatik güncelle (üzerine yaz).
+        for seri in self.proje.seriler:
+            seri.urun_ismi = t
+        self.seri_tablo.blockSignals(True)
+        for r in range(SERI_SAYISI):
+            self._hucreyi_ayarla(r, 0, t)
+        self.seri_tablo.blockSignals(False)
 
     def _seri_hucre_degisti(self, row: int, col: int) -> None:
         if not (0 <= row < len(self.proje.seriler)):
@@ -114,23 +120,46 @@ class GenelBilgiModulu(QWidget):
             seri.seri_no = v
         elif col == 2:
             seri.seri_boyutu_adet = v
+            if row == 0:
+                self._alt_satirlara_kopyala(2, v, "seri_boyutu_adet")
         elif col == 3:
             seri.seri_boyutu_kg = v
+            if row == 0:
+                self._alt_satirlara_kopyala(3, v, "seri_boyutu_kg")
+
+    def _alt_satirlara_kopyala(self, col: int, deger: str, alan: str) -> None:
+        """İlk satırdaki seri boyutu değerini alttaki 2 satıra kopyalar (üzerine yazar)."""
+        self.seri_tablo.blockSignals(True)
+        for r in range(1, SERI_SAYISI):
+            setattr(self.proje.seriler[r], alan, deger)
+            self._hucreyi_ayarla(r, col, deger)
+        self.seri_tablo.blockSignals(False)
+
+    def _hucreyi_ayarla(self, row: int, col: int, metin: str) -> None:
+        """Var olan item'ı yeniden kullanır; yoksa oluşturur (eski item birikmesini önler)."""
+        it = self.seri_tablo.item(row, col)
+        if it is None:
+            it = QTableWidgetItem(metin)
+            self.seri_tablo.setItem(row, col, it)
+        else:
+            it.setText(metin)
 
     def _verilerden_doldur(self) -> None:
         d = self.proje.dokuman
-        self.in_firma.setText(d.firma_ismi)
-        self.in_urun.setText(d.urun_adi)
-        self.in_pvp_no.setText(d.pvp_dokuman_no)
-        self.in_pvr_no.setText(d.pvr_dokuman_no)
-        self.in_rev_no.setText(d.revizyon_no)
-        self.in_rev_tarih.setText(d.revizyon_tarihi)
-        self.in_form_no.setText(d.form_no)
+        for le, deger in (
+            (self.in_firma, d.firma_ismi), (self.in_urun, d.urun_adi),
+            (self.in_pvp_no, d.pvp_dokuman_no), (self.in_pvr_no, d.pvr_dokuman_no),
+            (self.in_rev_no, d.revizyon_no), (self.in_rev_tarih, d.revizyon_tarihi),
+            (self.in_form_no, d.form_no),
+        ):
+            le.blockSignals(True)
+            le.setText(deger)
+            le.blockSignals(False)
 
         self.seri_tablo.blockSignals(True)
         for r in range(SERI_SAYISI):
             seri = self.proje.seriler[r]
             for c, v in enumerate([seri.urun_ismi, seri.seri_no,
                                    seri.seri_boyutu_adet, seri.seri_boyutu_kg]):
-                self.seri_tablo.setItem(r, c, QTableWidgetItem(v))
+                self._hucreyi_ayarla(r, c, v)
         self.seri_tablo.blockSignals(False)

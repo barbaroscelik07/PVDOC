@@ -242,7 +242,8 @@ class AnaPencere(QMainWindow):
 
     def projeyi_ac(self) -> None:
         yol, _ = QFileDialog.getOpenFileName(
-            self, "Proje Aç", "", "PV-DOC Projesi (*.pvdoc)"
+            self, "Proje Aç", "", "PV-DOC Projesi (*.pvdoc)",
+            options=QFileDialog.Option.DontUseNativeDialog,
         )
         if not yol:
             return
@@ -268,7 +269,8 @@ class AnaPencere(QMainWindow):
     def farkli_kaydet(self) -> bool:
         onerilen = self.proje.dokuman.urun_adi or "proje"
         yol, _ = QFileDialog.getSaveFileName(
-            self, "Farklı Kaydet", onerilen, "PV-DOC Projesi (*.pvdoc)"
+            self, "Farklı Kaydet", onerilen, "PV-DOC Projesi (*.pvdoc)",
+            options=QFileDialog.Option.DontUseNativeDialog,
         )
         if not yol:
             return False

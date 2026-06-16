@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
-    QComboBox, QDoubleSpinBox, QPushButton, QTableWidget, QTableWidgetItem,
+    QComboBox, QDoubleSpinBox, QSpinBox, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QListWidget, QListWidgetItem, QInputDialog, QMessageBox,
     QCheckBox, QAbstractItemView, QScrollArea,
 )
@@ -157,6 +157,12 @@ class SpekModulu(QWidget):
         self.cmb_op = QComboBox()  # form filtresine göre dolar (1.5)
         izgara.addWidget(self.cmb_op, s, 1); s += 1
 
+        izgara.addWidget(QLabel("Operasyon No:"), s, 0)
+        self.sp_op_no = QSpinBox()
+        self.sp_op_no.setRange(0, 99)
+        self.sp_op_no.setButtonSymbols(QSpinBox.ButtonSymbols.UpDownArrows)
+        izgara.addWidget(self.sp_op_no, s, 1); s += 1
+
         izgara.addWidget(QLabel("Etkin Madde:"), s, 0)
         self.cmb_em = QComboBox()  # -1 = ürüne ait genel
         izgara.addWidget(self.cmb_em, s, 1); s += 1
@@ -261,6 +267,21 @@ class SpekModulu(QWidget):
         self.cmb_op.clear()
         if isinstance(f, UrunFormu):
             self.cmb_op.addItems(f.operasyonlar)
+        # operasyon seçilince no öner
+        try:
+            self.cmb_op.currentTextChanged.disconnect(self._op_no_oner)
+        except TypeError:
+            pass
+        self.cmb_op.currentTextChanged.connect(self._op_no_oner)
+        self._op_no_oner(self.cmb_op.currentText())
+
+    # Operasyon adı → tipik operasyon numarası (kullanıcı değiştirebilir)
+    _OP_NO = {"Karıştırma": 2, "Tablet Baskı": 3, "Film Kaplama": 4,
+              "Dolum": 3, "Blisterleme": 5}
+
+    def _op_no_oner(self, op_adi: str) -> None:
+        if hasattr(self, "sp_op_no"):
+            self.sp_op_no.setValue(self._OP_NO.get(op_adi, 0))
 
     # ---- etkin madde (1.4) ----
     def _em_listesini_yenile(self) -> None:
@@ -367,6 +388,7 @@ class SpekModulu(QWidget):
         test = Test(
             ad=ad,
             operasyon=self.cmb_op.currentText(),
+            operasyon_no=self.sp_op_no.value(),
             spesifikasyon=spek,
             tablo_tipi=tablo_tipini_belirle(ad),     # otomatik (1.1)
             etkin_madde_index=self.cmb_em.currentData(),

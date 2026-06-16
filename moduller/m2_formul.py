@@ -12,8 +12,9 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView, QComboBox,
+    QTableWidgetItem, QHeaderView, QAbstractItemView, QComboBox, QApplication,
 )
+from PyQt6.QtGui import QKeySequence, QShortcut
 
 from core.models import ProjeVerisi, Hammadde
 from moduller.widget_yardimcilari import (
@@ -59,13 +60,16 @@ class FormulModulu(QWidget):
         ust.addStretch(1)
         b_ekle = QPushButton("+ Hammadde"); b_ekle.clicked.connect(self._satir_ekle)
         b_top = QPushButton("+ Ara Toplam"); b_top.clicked.connect(self._toplam_ekle)
+        b_yapistir = QPushButton("Excel/Word Yapıştır"); b_yapistir.clicked.connect(self._panodan_yapistir)
         b_sil = QPushButton("− Sil"); b_sil.setObjectName("tehlike"); b_sil.clicked.connect(self._satir_sil)
-        ust.addWidget(b_ekle); ust.addWidget(b_top); ust.addWidget(b_sil)
+        ust.addWidget(b_yapistir); ust.addWidget(b_ekle); ust.addWidget(b_top); ust.addWidget(b_sil)
         kok.addLayout(ust)
 
         kok.addWidget(ipucu_etiketi(
             "Çift katmanlı tablette her satırı bir katmana atayın. "
-            "‘Ara Toplam’ satırı katman/çekirdek/toplam ağırlık satırları içindir."
+            "Excel/Word'den kopyaladığınız tabloyu ‘Excel/Word Yapıştır’ ile "
+            "(veya tabloya tıklayıp Ctrl+V) mevcut satırların altına ekleyebilirsiniz. "
+            "Sütun sırası: Hammadde · Fonksiyon · Birim Formül · % İçerik · kg/seri."
         ))
 
         t = QTableWidget(0, 6)
@@ -81,10 +85,42 @@ class FormulModulu(QWidget):
         self.tablo = t
         kok.addWidget(t, 1)
 
+        # Ctrl+V: tablo odaktayken panodan yapıştır
+        ksy = QShortcut(QKeySequence.StandardKey.Paste, t)
+        ksy.activated.connect(self._panodan_yapistir)
+
     # ----------------------------------------------------------- veri ↔ UI
     def _satir_ekle(self) -> None:
         self.proje.hammaddeler.append(Hammadde(ad=""))
         self._verilerden_doldur()
+
+    def _panodan_yapistir(self) -> None:
+        """
+        Excel/Word'den kopyalanan tabloyu mevcut satırların ALTINA ekler.
+        Satırlar yeni satır (\\n), sütunlar sekme (\\t) ile ayrılır — Excel/Word
+        kopyalamasının standart biçimi. Sütun sırası:
+        Hammadde · Fonksiyon · Birim Formül · % İçerik · kg/seri.
+        """
+        metin = QApplication.clipboard().text()
+        if not metin.strip():
+            return
+        eklenen = 0
+        for satir in metin.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            if not satir.strip():
+                continue
+            h = satir.split("\t")
+            # eksik sütunları boş kabul et
+            h += [""] * (5 - len(h))
+            self.proje.hammaddeler.append(Hammadde(
+                ad=h[0].strip(),
+                fonksiyon=h[1].strip(),
+                birim_formul=_pf(h[2]),
+                yuzde_icerik=_pf(h[3]),
+                seri_miktar=_pf(h[4]),
+            ))
+            eklenen += 1
+        if eklenen:
+            self._verilerden_doldur()
 
     def _toplam_ekle(self) -> None:
         self.proje.hammaddeler.append(Hammadde(ad="Katman Ağırlık", ara_toplam=True))

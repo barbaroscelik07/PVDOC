@@ -180,8 +180,21 @@ class AnaPencere(QMainWindow):
 
     def _gercek_modulleri_bagla(self) -> None:
         """Tamamlanmış modülleri yer tutucularla değiştirir."""
+        from moduller.m1_genel_bilgi import GenelBilgiModulu
+        from moduller.m2_formul import FormulModulu
+        from moduller.m3_proses_tanim import ProsesModulu
+        from moduller.m4_risk_analizi import RiskModulu
+        from moduller.m5_ekipman import EkipmanModulu
         from moduller.m6_spesifikasyon import SpekModulu
+        from moduller.m7_numune_plani import NumuneModulu
+
+        self.modulu_yenile("genel", GenelBilgiModulu(self.proje))
+        self.modulu_yenile("formul", FormulModulu(self.proje))
+        self.modulu_yenile("proses", ProsesModulu(self.proje))
+        self.modulu_yenile("risk", RiskModulu(self.proje))
+        self.modulu_yenile("ekipman", EkipmanModulu(self.proje))
         self.modulu_yenile("spek", SpekModulu(self.proje))
+        self.modulu_yenile("numune", NumuneModulu(self.proje))
 
     def _menuyu_kur(self) -> None:
         cubuk = self.menuBar()

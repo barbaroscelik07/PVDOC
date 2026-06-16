@@ -21,7 +21,9 @@ a = Analysis(
     # Not: cikti/sablonlar ve kaynaklar/spek_kartlari klasörleri uygulama
     # ilk çalıştığında kod tarafından oluşturulur (bkz. core/yollar.py).
     # Bu yüzden burada paketlenecek boş klasör/.gitkeep gerekmez.
-    datas=[],
+    datas=[
+        ('kaynaklar_ikon/ikon.ico', 'kaynaklar_ikon'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -66,5 +68,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,            # ileride: 'kaynaklar/ikon.ico'
+    icon='kaynaklar_ikon/ikon.ico',
 )

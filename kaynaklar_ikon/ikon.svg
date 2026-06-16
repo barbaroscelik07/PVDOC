@@ -1,0 +1,53 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Lacivert zemin gradyanı (derinlik için hafif) -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#00337A"/>
+      <stop offset="1" stop-color="#00295C"/>
+    </linearGradient>
+    <!-- Sarı belge gradyanı -->
+    <linearGradient id="kagit" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFF34D"/>
+      <stop offset="1" stop-color="#FFED00"/>
+    </linearGradient>
+    <!-- Kıvrık köşenin gölgeli arka yüzü -->
+    <linearGradient id="kivrik" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E6D400"/>
+      <stop offset="1" stop-color="#C9B900"/>
+    </linearGradient>
+    <filter id="golge" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="26" flood-color="#000000" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+
+  <!-- Yuvarlak köşeli lacivert zemin -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bg)"/>
+
+  <!-- BELGE: tek şekil. Sağ üst köşesi kıvrık. -->
+  <g filter="url(#golge)">
+    <!-- Belgenin gövdesi: sol-üst, sol-alt, sağ-alt köşeler düz;
+         sağ-üstte kıvrım için kesik. -->
+    <path d="
+      M 300 232
+      L 600 232
+      L 792 424
+      L 792 792
+      L 300 792
+      Z" fill="url(#kagit)"/>
+
+    <!-- Kıvrık köşe (sayfanın katlanmış üçgeni) -->
+    <path d="
+      M 600 232
+      L 792 424
+      L 600 424
+      Z" fill="url(#kivrik)"/>
+  </g>
+
+  <!-- Belge üzerindeki metin satırları (lacivert) — okunabilir, dengeli -->
+  <g fill="#00295C">
+    <rect x="356" y="470" width="380" height="36" rx="18"/>
+    <rect x="356" y="544" width="380" height="36" rx="18"/>
+    <rect x="356" y="618" width="380" height="36" rx="18"/>
+    <rect x="356" y="692" width="248" height="36" rx="18"/>
+  </g>
+</svg>

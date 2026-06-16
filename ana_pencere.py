@@ -21,9 +21,22 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QStackedWidget, QLabel, QFileDialog, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QIcon
 
 from core.models import ProjeVerisi
 from core import proje_io
+
+
+def _ikon_yolu() -> str:
+    """
+    ikon.ico'nun tam yolunu döndürür.
+    PyInstaller ile paketlendiğinde dosya geçici _MEIPASS klasörüne açılır;
+    normal çalışmada ise proje kökünden okunur.
+    """
+    import sys
+    import os
+    taban = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(taban, "kaynaklar_ikon", "ikon.ico")
 
 
 # Hub'da görünecek modüller: (anahtar, görünen ad). Sıra = iş akışı sırası.
@@ -105,6 +118,10 @@ class AnaPencere(QMainWindow):
         self.setWindowTitle("PV-DOC")
         self.resize(1100, 720)
         self.setStyleSheet(STIL)
+
+        ikon = _ikon_yolu()
+        if os.path.exists(ikon):
+            self.setWindowIcon(QIcon(ikon))
 
         self._arayuzu_kur()
         self._menuyu_kur()

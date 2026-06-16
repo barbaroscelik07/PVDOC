@@ -172,7 +172,16 @@ class AnaPencere(QMainWindow):
         yatay.addWidget(self.stack, 1)
 
         self.setCentralWidget(merkez)
+
+        # Gerçek modülleri bağla (tamamlandıkça buraya eklenir)
+        self._gercek_modulleri_bagla()
+
         self.nav.setCurrentRow(0)
+
+    def _gercek_modulleri_bagla(self) -> None:
+        """Tamamlanmış modülleri yer tutucularla değiştirir."""
+        from moduller.m6_spesifikasyon import SpekModulu
+        self.modulu_yenile("spek", SpekModulu(self.proje))
 
     def _menuyu_kur(self) -> None:
         cubuk = self.menuBar()
@@ -215,6 +224,7 @@ class AnaPencere(QMainWindow):
         self.proje = ProjeVerisi()
         self.aktif_yol = None
         proje_io.oturumu_temizle()
+        self._gercek_modulleri_bagla()
         self._baslik_guncelle()
 
     def projeyi_ac(self) -> None:
@@ -226,6 +236,7 @@ class AnaPencere(QMainWindow):
         try:
             self.proje = proje_io.projeyi_yukle(yol)
             self.aktif_yol = Path(yol)
+            self._gercek_modulleri_bagla()
             self._baslik_guncelle()
         except Exception as e:  # geniş tut: dosya bozuk olabilir
             QMessageBox.critical(self, "Açma Hatası", f"Proje açılamadı:\n{e}")

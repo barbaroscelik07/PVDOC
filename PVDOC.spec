@@ -13,6 +13,11 @@ Yerel derleme (Windows'ta):
 
 block_cipher = None
 
+# python-docx, Document() çağrısında templates/default.docx dosyasını okur.
+# PyInstaller bunu otomatik toplamayabilir; açıkça topluyoruz.
+from PyInstaller.utils.hooks import collect_data_files
+_docx_datas = collect_data_files('docx')
+
 
 a = Analysis(
     ['main.py'],
@@ -20,11 +25,10 @@ a = Analysis(
     binaries=[],
     # Not: cikti/sablonlar ve kaynaklar/spek_kartlari klasörleri uygulama
     # ilk çalıştığında kod tarafından oluşturulur (bkz. core/yollar.py).
-    # Bu yüzden burada paketlenecek boş klasör/.gitkeep gerekmez.
     datas=[
         ('kaynaklar_ikon/ikon.ico', 'kaynaklar_ikon'),
-    ],
-    hiddenimports=[],
+    ] + _docx_datas,
+    hiddenimports=['docx', 'lxml._elementpath', 'lxml.etree'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

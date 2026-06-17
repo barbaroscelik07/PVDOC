@@ -187,6 +187,7 @@ class AnaPencere(QMainWindow):
         from moduller.m5_ekipman import EkipmanModulu
         from moduller.m6_spesifikasyon import SpekModulu
         from moduller.m7_numune_plani import NumuneModulu
+        from moduller.m8_cikti import CiktiModulu
 
         self.modulu_yenile("genel", GenelBilgiModulu(self.proje))
         self.modulu_yenile("formul", FormulModulu(self.proje))
@@ -195,6 +196,7 @@ class AnaPencere(QMainWindow):
         self.modulu_yenile("ekipman", EkipmanModulu(self.proje))
         self.modulu_yenile("spek", SpekModulu(self.proje))
         self.modulu_yenile("numune", NumuneModulu(self.proje))
+        self.modulu_yenile("cikti", CiktiModulu(self.proje))
 
     def _menuyu_kur(self) -> None:
         cubuk = self.menuBar()

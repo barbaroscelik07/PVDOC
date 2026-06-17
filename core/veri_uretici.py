@@ -85,10 +85,22 @@ def _deger(spek: Spesifikasyon, alt: float, ust: float) -> float:
 # Tablo tipine göre üretim
 # ----------------------------------------------------------------------------
 
-def _tek_sonuc(spek: Spesifikasyon) -> dict:
-    """3 seri × tek değer/metin."""
+def _tek_sonuc(spek: Spesifikasyon, test_adi: str = "") -> dict:
+    """
+    3 seri × tek değer/metin.
+    - Görünüş → sonuç 'Uygun'  (spesifikasyon 'Beyaz toz' olsa bile).
+    - Teşhis  → sonuç 'Pozitif'.
+    - Diğer METIN/BILGI → sabit_sonuc (varsa) yoksa 'Uygun'.
+    - Sayısal tip (Elek Testi, Bulk/Tap Dansite): spek bandından DEĞER üretilir.
+    """
+    ad = test_adi.lower()
     if spek.limit_turu in (LimitTuru.METIN, LimitTuru.BILGI):
-        deg = spek.sabit_sonuc or "Uygun"
+        if "görünüş" in ad or "gorunus" in ad:
+            deg = "Uygun"
+        elif "teşhis" in ad or "teshis" in ad:
+            deg = "Pozitif"
+        else:
+            deg = spek.sabit_sonuc or "Uygun"
         return {"seriler": [deg for _ in range(SERI_SAYISI)]}
     alt, ust = _uretim_araligi(spek)
     return {"seriler": [f"{_deger(spek, alt, ust)} {spek.birim}".strip()
@@ -110,11 +122,24 @@ def _iki_numune(spek: Spesifikasyon) -> dict:
 
 
 def _on_numune(spek: Spesifikasyon) -> dict:
-    """1..10 numune + Ortalama, her seri için."""
-    alt, ust = _uretim_araligi(spek)
+    """
+    1..10 numune + Ortalama, her seri için.
+    Karışım Tekdüzeliği tipik olarak %95–%105 bandında, ortalama ~%100–102
+    çıkar (spesifikasyon %85–115 olsa bile gerçekçi sağlıklı veri budur).
+    """
+    # Spek aralığı geniş olsa da gerçekçi dar bant kullan
+    if spek.limit_turu is LimitTuru.ARALIK and spek.alt_limit is not None and spek.ust_limit is not None:
+        alt, ust = 95.0, 105.0
+        # spek bandı daha darsa ona uy
+        if spek.alt_limit > alt:
+            alt = spek.alt_limit + 1
+        if spek.ust_limit < ust:
+            ust = spek.ust_limit - 1
+    else:
+        alt, ust = _uretim_araligi(spek)
     seriler = []
     for _ in range(SERI_SAYISI):
-        olcumler = [_deger(spek, alt, ust) for _ in range(10)]
+        olcumler = [round(random.uniform(alt, ust), spek.ondalik) for _ in range(10)]
         seriler.append({
             "olcumler": olcumler,
             "ortalama": round(ortalama(olcumler), spek.ondalik),
@@ -172,7 +197,7 @@ def test_verisi_uret(test: Test) -> dict:
     t = test.tablo_tipi
     spek = test.spesifikasyon
     if t is TabloTipi.TEK_SONUC:
-        return _tek_sonuc(spek)
+        return _tek_sonuc(spek, test.ad)
     if t is TabloTipi.IKI_NUMUNE:
         return _iki_numune(spek)
     if t is TabloTipi.ON_NUMUNE:

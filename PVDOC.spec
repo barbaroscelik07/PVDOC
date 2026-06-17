@@ -27,6 +27,7 @@ a = Analysis(
     # ilk çalıştığında kod tarafından oluşturulur (bkz. core/yollar.py).
     datas=[
         ('kaynaklar_ikon/ikon.ico', 'kaynaklar_ikon'),
+        ('cikti/sablonlar/PVP_sablon.docx', 'cikti/sablonlar'),
     ] + _docx_datas,
     hiddenimports=['docx', 'lxml._elementpath', 'lxml.etree'],
     hookspath=[],

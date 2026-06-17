@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QComboBox, QDoubleSpinBox, QSpinBox, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QListWidget, QListWidgetItem, QInputDialog, QMessageBox,
-    QCheckBox, QAbstractItemView, QScrollArea,
+    QCheckBox, QAbstractItemView, QScrollArea, QDialog, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt
 
@@ -174,18 +174,24 @@ class SpekModulu(QWidget):
         self.cmb_limit.currentIndexChanged.connect(self._limit_turu_degisti)
         izgara.addWidget(self.cmb_limit, s, 1); s += 1
 
-        # Dinamik sayısal alanlar
-        self.in_hedef = self._spin()
-        self.in_alt = self._spin()
-        self.in_ust = self._spin()
-        self.in_min = self._spin()
-        self.in_maks = self._spin()
+        # Dinamik giriş alanları — QLineEdit ile ondalık BİREBİR korunur
+        # (5,0 yazarsan 5,0 kalır; QDoubleSpinBox 5,000 yapardı).
+        self.in_hedef = QLineEdit()
+        self.in_alt = QLineEdit()
+        self.in_ust = QLineEdit()
+        self.in_min = QLineEdit()
+        self.in_maks = QLineEdit()
+        self.in_tol = QLineEdit()
+        self.in_tol.setPlaceholderText("örn. ±%5  (boş bırakılabilir)")
+        for le in (self.in_hedef, self.in_alt, self.in_ust, self.in_min, self.in_maks):
+            le.setPlaceholderText("sayı (örn. 5,0)")
         self.in_metin = QLineEdit()
         self.in_metin.setPlaceholderText("örn. Beyaz renkli toz / Pozitif / Uygun")
         self.in_birim = QLineEdit()
         self.in_birim.setPlaceholderText("mg/f.tab, %, kP, mm, dakika …")
 
         self.lbl_hedef = QLabel("Hedef:"); izgara.addWidget(self.lbl_hedef, s, 0); izgara.addWidget(self.in_hedef, s, 1); s += 1
+        self.lbl_tol = QLabel("Tolerans:"); izgara.addWidget(self.lbl_tol, s, 0); izgara.addWidget(self.in_tol, s, 1); s += 1
         self.lbl_alt = QLabel("Alt Limit:"); izgara.addWidget(self.lbl_alt, s, 0); izgara.addWidget(self.in_alt, s, 1); s += 1
         self.lbl_ust = QLabel("Üst Limit:"); izgara.addWidget(self.lbl_ust, s, 0); izgara.addWidget(self.in_ust, s, 1); s += 1
         self.lbl_min = QLabel("Minimum:"); izgara.addWidget(self.lbl_min, s, 0); izgara.addWidget(self.in_min, s, 1); s += 1
@@ -212,13 +218,6 @@ class SpekModulu(QWidget):
 
         self._limit_turu_degisti()  # ilk durumda alanları ayarla
         return d
-
-    def _spin(self) -> QDoubleSpinBox:
-        sp = QDoubleSpinBox()
-        sp.setDecimals(3)
-        sp.setRange(-1_000_000, 1_000_000)
-        sp.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
-        return sp
 
     def _test_tablosu_olustur(self) -> QTableWidget:
         t = QTableWidget(0, 7)
@@ -335,12 +334,37 @@ class SpekModulu(QWidget):
         if not em:
             QMessageBox.information(self, "İmpurite", "Önce bir etkin madde seçin.")
             return
-        ad, ok = QInputDialog.getText(self, "İmpurite", "İmpurite adı (örn. imp. a):")
-        if not (ok and ad.strip()):
+
+        dlg = ImpuriteDialog(self, operasyonlar=[self.cmb_op.itemText(i)
+                                                 for i in range(self.cmb_op.count())])
+        if not dlg.exec():
             return
-        limit, ok2 = QInputDialog.getText(self, "İmpurite Limiti", "Limit (örn. Maksimum %1.0):")
-        em.impuriteler.append(Impurite(ad=ad.strip(), limit_metni=limit.strip() if ok2 else ""))
+        v = dlg.degerler()
+        if not v["ad"]:
+            return
+
+        # 1) impurite olarak etkin maddeye ekle
+        em.impuriteler.append(Impurite(ad=v["ad"], limit_metni=v["limit"],
+                                       maksimum_deger=self._sayi(v["maks"])))
         self._imp_listesini_yenile()
+
+        # 2) "İlgili Bileşikler" testi olarak test tablosuna ekle (kullanıcı kararı)
+        spek = Spesifikasyon(limit_turu=LimitTuru.MAKSIMUM,
+                             maksimum_metin=v["maks"], maksimum_deger=self._sayi(v["maks"]),
+                             birim="%")
+        if v["limit"]:
+            spek.spesifikasyon_metni = v["limit"]
+        test = Test(
+            ad=f"{em.ad} {v['ad']}",
+            operasyon=v["operasyon"],
+            operasyon_no=self._OP_NO.get(v["operasyon"], 0),
+            spesifikasyon=spek,
+            tablo_tipi=TabloTipi.IKI_NUMUNE,   # İlgili Bileşikler 2-numune yapısı
+            etkin_madde_index=self.liste_em.currentRow(),
+            yildizli=v["yildiz"],
+        )
+        self.kart.testler.append(test)
+        self._tabloyu_yenile()
 
     def _imp_sil(self) -> None:
         em = self._secili_em()
@@ -354,6 +378,7 @@ class SpekModulu(QWidget):
         tur = _LIMIT_SECENEKLERI[self.cmb_limit.currentIndex()][1]
         goster = {
             "hedef": tur is LimitTuru.ARALIK,
+            "tol": tur is LimitTuru.ARALIK,
             "alt": tur is LimitTuru.ARALIK,
             "ust": tur is LimitTuru.ARALIK,
             "min": tur is LimitTuru.MINIMUM,
@@ -365,6 +390,17 @@ class SpekModulu(QWidget):
             getattr(self, f"lbl_{ad}").setVisible(vis)
             getattr(self, f"in_{ad}").setVisible(vis)
 
+    @staticmethod
+    def _sayi(metin: str):
+        """Ham metni float'a çevirir (veri üretimi için). Boş/geçersizse None."""
+        metin = metin.strip().replace(",", ".")
+        if not metin:
+            return None
+        try:
+            return float(metin)
+        except ValueError:
+            return None
+
     # ---- test ekle (1.3 + 1.6) ----
     def _test_ekle(self) -> None:
         ad = self.in_ad.text().strip()
@@ -375,13 +411,20 @@ class SpekModulu(QWidget):
         tur = _LIMIT_SECENEKLERI[self.cmb_limit.currentIndex()][1]
         spek = Spesifikasyon(limit_turu=tur, birim=self.in_birim.text().strip())
         if tur is LimitTuru.ARALIK:
-            spek.hedef_deger = self.in_hedef.value()
-            spek.alt_limit = self.in_alt.value()
-            spek.ust_limit = self.in_ust.value()
+            # Ham metni BİREBİR sakla (ondalık korunur); float'ı veri üretimi için türet
+            spek.hedef_metin = self.in_hedef.text().strip()
+            spek.alt_metin = self.in_alt.text().strip()
+            spek.ust_metin = self.in_ust.text().strip()
+            spek.tolerans = self.in_tol.text().strip()
+            spek.hedef_deger = self._sayi(spek.hedef_metin)
+            spek.alt_limit = self._sayi(spek.alt_metin)
+            spek.ust_limit = self._sayi(spek.ust_metin)
         elif tur is LimitTuru.MINIMUM:
-            spek.minimum_deger = self.in_min.value()
+            spek.minimum_metin = self.in_min.text().strip()
+            spek.minimum_deger = self._sayi(spek.minimum_metin)
         elif tur is LimitTuru.MAKSIMUM:
-            spek.maksimum_deger = self.in_maks.value()
+            spek.maksimum_metin = self.in_maks.text().strip()
+            spek.maksimum_deger = self._sayi(spek.maksimum_metin)
         elif tur is LimitTuru.METIN:
             spek.sabit_sonuc = self.in_metin.text().strip()
 
@@ -399,8 +442,9 @@ class SpekModulu(QWidget):
         self._tabloyu_yenile()
 
         # formu sıfırla (operasyon/form korunur, hızlı ardışık giriş için)
-        self.in_ad.clear()
-        self.in_metin.clear()
+        for le in (self.in_ad, self.in_metin, self.in_hedef, self.in_alt,
+                   self.in_ust, self.in_min, self.in_maks, self.in_tol):
+            le.clear()
         self.chk_ipk.setChecked(False)
         self.chk_yildiz.setChecked(False)
 
@@ -421,7 +465,7 @@ class SpekModulu(QWidget):
             degerler = [
                 str(test.operasyon_no or ""),
                 test.operasyon,
-                test.ad,
+                test.ad + ("*" if test.yildizli else ""),
                 test.spesifikasyon.metni_olustur(),
                 test.tablo_tipi.value,
                 "E" if test.ipk else "",
@@ -470,3 +514,48 @@ class SpekModulu(QWidget):
             self._verilerden_doldur()
         except Exception as e:
             QMessageBox.critical(self, "Hata", f"Kart yüklenemedi:\n{e}")
+
+
+class ImpuriteDialog(QDialog):
+    """İmpurite eklerken ad, limit, operasyon ve yıldız bilgisini tek seferde toplar."""
+
+    def __init__(self, parent, operasyonlar: list[str]):
+        super().__init__(parent)
+        self.setWindowTitle("İmpurite Ekle")
+        self.setStyleSheet(MODUL_STIL)
+        self.setMinimumWidth(360)
+
+        izg = QGridLayout(self)
+        izg.addWidget(QLabel("İmpurite adı:"), 0, 0)
+        self.in_ad = QLineEdit(); self.in_ad.setPlaceholderText("örn. imp. a / Toplam imp.")
+        izg.addWidget(self.in_ad, 0, 1)
+
+        izg.addWidget(QLabel("Limit metni:"), 1, 0)
+        self.in_limit = QLineEdit(); self.in_limit.setPlaceholderText("örn. Maksimum %1.0 (boşsa otomatik)")
+        izg.addWidget(self.in_limit, 1, 1)
+
+        izg.addWidget(QLabel("Maksimum (sayı):"), 2, 0)
+        self.in_maks = QLineEdit(); self.in_maks.setPlaceholderText("örn. 1,0")
+        izg.addWidget(self.in_maks, 2, 1)
+
+        izg.addWidget(QLabel("Operasyon:"), 3, 0)
+        self.cmb_op = QComboBox(); self.cmb_op.addItems(operasyonlar)
+        izg.addWidget(self.cmb_op, 3, 1)
+
+        self.chk_yildiz = QCheckBox("* Validasyon serilerinde uygulanır")
+        izg.addWidget(self.chk_yildiz, 4, 0, 1, 2)
+
+        btn = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn.accepted.connect(self.accept)
+        btn.rejected.connect(self.reject)
+        izg.addWidget(btn, 5, 0, 1, 2)
+
+    def degerler(self) -> dict:
+        return {
+            "ad": self.in_ad.text().strip(),
+            "limit": self.in_limit.text().strip(),
+            "maks": self.in_maks.text().strip(),
+            "operasyon": self.cmb_op.currentText(),
+            "yildiz": self.chk_yildiz.isChecked(),
+        }

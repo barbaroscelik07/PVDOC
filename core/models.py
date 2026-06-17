@@ -91,36 +91,61 @@ class Spesifikasyon:
     """
     limit_turu: LimitTuru = LimitTuru.METIN
 
-    # Sayısal limitler (LimitTuru'na göre anlamlı olanlar dolar)
+    # Sayısal limitler (veri üretimi için; LimitTuru'na göre anlamlı olanlar dolar)
     hedef_deger: Optional[float] = None
     alt_limit: Optional[float] = None
     ust_limit: Optional[float] = None
     minimum_deger: Optional[float] = None
     maksimum_deger: Optional[float] = None
 
-    birim: str = ""               # "mg/f.tab", "%", "kP", "dakika", "mm" ...
-    ondalik: int = 2              # üretilen sonuçların ondalık basamak sayısı
+    # Kullanıcının GİRDİĞİ ham metin (ondalık birebir korunur: "5,0" -> "5,0").
+    # Görüntüde bunlar kullanılır; sayısal alanlar yalnızca veri üretimi içindir.
+    hedef_metin: str = ""
+    alt_metin: str = ""
+    ust_metin: str = ""
+    minimum_metin: str = ""
+    maksimum_metin: str = ""
 
-    # Spesifikasyon hücresinde gösterilecek hazır metin (örn. "5.0 mg/f.tab ±%5 (4.75 – 5.25 mg/f.tab)")
-    # Boşsa otomatik biçimlenir.
+    tolerans: str = ""            # örn. "±%5" — Miktar Tayini vb. için
+    birim: str = ""               # "mg/f.tab", "%", "kP", "dakika", "mm" ...
+    ondalik: int = 2              # üretilen SONUÇ verisinin ondalık basamağı
+
+    # Spesifikasyon hücresinde gösterilecek hazır metin. Boşsa otomatik biçimlenir.
     spesifikasyon_metni: str = ""
 
     # Metin tipli testler için sabit sonuç (örn. "Beyaz renkli toz", "Uygun", "Pozitif")
     sabit_sonuc: str = ""
 
+    def _g(self, metin: str, sayi: Optional[float]) -> str:
+        """Ham metin doluysa onu, değilse sayıyı döndürür (ondalık koruma)."""
+        if metin.strip():
+            return metin.strip()
+        return "" if sayi is None else f"{sayi:g}"
+
     def metni_olustur(self) -> str:
-        """spesifikasyon_metni boşsa limit türünden otomatik metin üretir."""
+        """
+        Spesifikasyon hücre metnini üretir. Ham metin alanları varsa onları
+        kullanır (kullanıcının girdiği ondalık birebir korunur).
+        Tolerans varsa hedef ile birlikte gösterilir:
+          "5,0 mg/f.tab ±%5 (4,75 – 5,25 mg/f.tab)"
+        """
         if self.spesifikasyon_metni:
             return self.spesifikasyon_metni
         b = f" {self.birim}".rstrip()
+        tol = f" {self.tolerans}".rstrip() if self.tolerans.strip() else ""
+
         if self.limit_turu is LimitTuru.ARALIK:
-            if self.hedef_deger is not None:
-                return f"{self.hedef_deger}{b} ({self.alt_limit} – {self.ust_limit}{b})"
-            return f"{self.alt_limit} – {self.ust_limit}{b}"
+            hedef = self._g(self.hedef_metin, self.hedef_deger)
+            alt = self._g(self.alt_metin, self.alt_limit)
+            ust = self._g(self.ust_metin, self.ust_limit)
+            if hedef:
+                aralik = f" ({alt} – {ust}{b})" if (alt or ust) else ""
+                return f"{hedef}{b}{tol}{aralik}"
+            return f"{alt} – {ust}{b}"
         if self.limit_turu is LimitTuru.MINIMUM:
-            return f"Minimum {self.minimum_deger}{b}"
+            return f"Minimum {self._g(self.minimum_metin, self.minimum_deger)}{b}"
         if self.limit_turu is LimitTuru.MAKSIMUM:
-            return f"Maksimum {self.maksimum_deger}{b}"
+            return f"Maksimum {self._g(self.maksimum_metin, self.maksimum_deger)}{b}"
         if self.limit_turu is LimitTuru.BILGI:
             return "Bilgi amaçlıdır."
         return self.sabit_sonuc

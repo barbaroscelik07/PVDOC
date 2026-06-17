@@ -1,69 +1,94 @@
 """
-DOCX üretim motoru (python-docx).
+DOCX üretim motoru — ŞABLON DOLDURMA yaklaşımı.
 
-ProjeVerisi'nden PVP (protokol) ve PVR (rapor) Word dosyalarını üretir.
-- PVP: spesifikasyonlar + boş/öngörülen yapı.
-- PVR: PVP içeriği + dolu sonuç tabloları (Bölüm 11), simüle veriden.
+PVP/PVR şablonu açılır, placeholder'lar kullanıcı verisiyle değiştirilir ve
+dinamik tablolar (formül, kapsanan ürünler, risk, proses param, ekipman,
+spesifikasyon, numune planı, PVR sonuçları) şablonun kendi satır biçimi
+korunarak doldurulur.
 
-Tasarım: tek dil (Python), tek motor. Sabit metinler cikti/sabit_metinler.py'den;
-dinamik tablolar bu modülde. Çıktı UTF-8 Türkçe karakter güvenli.
+Bu yaklaşım şablonun fontunu, satır boşluklarını, kenarlıklarını, kapak
+sayfasını, içindekiler bölümünü ve gömülü resimleri (IBC numune resmi vb.)
+BİREBİR korur — sıfırdan üretimde kaybedilen "taslakla aynı görünüm" budur.
+
+Tablolar indeks yerine ilk-hücre metnine göre bulunur (şablon değişse de sağlam).
 """
 
 from __future__ import annotations
 
+import sys
+import os
 from pathlib import Path
 
 from docx import Document
-from docx.shared import Pt, Cm, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.section import WD_SECTION
 
 from core.models import (
     ProjeVerisi, UrunFormu, Test, TabloTipi, LimitTuru,
     SERI_SAYISI, NOKTA_ADLARI,
 )
 from core import veri_uretici as vu
-from cikti import sabit_metinler as sm
+from cikti.sablon_doldur import (
+    belgede_degistir, satir_klonla, hucre_yaz, satiri_bosalt,
+)
 
 
-# Tema renkleri (lacivert başlıklar)
-_LACIVERT = RGBColor(0x00, 0x29, 0x5C)
-_KENAR = "BFBFBF"
+# ----------------------------------------------------------------------------
+# Şablon yolu (PyInstaller uyumlu)
+# ----------------------------------------------------------------------------
+
+def _sablon_yolu(ad: str) -> Path:
+    taban = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return Path(taban) / "cikti" / "sablonlar" / ad
 
 
-# ============================================================================
+# ----------------------------------------------------------------------------
 # Yardımcılar
-# ============================================================================
+# ----------------------------------------------------------------------------
 
-def _urun_adi(proje: ProjeVerisi) -> str:
-    return proje.dokuman.urun_adi or "Ürün"
-
-
-def _doldur(metin: str, proje: ProjeVerisi) -> str:
-    return metin.replace("{urun}", _urun_adi(proje)).replace(
-        "{firma}", proje.dokuman.firma_ismi or "{Firma ismi}")
+def _urun(proje: ProjeVerisi) -> str:
+    return proje.dokuman.urun_adi or "Xxx Film Kaplı Tablet"
 
 
-def _baslik(doc, metin: str, seviye: int = 1) -> None:
-    h = doc.add_heading(metin, level=seviye)
-    for run in h.runs:
-        run.font.color.rgb = _LACIVERT
+def _tablo_bul(doc, ilk_hucre_metni: str, sutun_sayisi: int | None = None):
+    """İlk hücresi verilen metinle başlayan ilk tabloyu döndürür."""
+    hedef = ilk_hucre_metni.strip().lower()
+    for t in doc.tables:
+        if not t.rows:
+            continue
+        ilk = t.rows[0].cells[0].text.strip().lower()
+        if ilk.startswith(hedef):
+            if sutun_sayisi is None or len(t.columns) == sutun_sayisi:
+                return t
+    return None
 
 
-def _p(doc, metin: str = "", bold: bool = False):
-    p = doc.add_paragraph()
-    r = p.add_run(metin)
-    r.bold = bold
-    return p
+def _tablo_basliga_gore(doc, tablo_no: int):
+    """
+    'Tablo N ...' başlık paragrafından HEMEN SONRA gelen tabloyu döndürür.
+    Benzer yapılı tabloları (Tablo 6 vs 8.2) kesin ayırt eder — en sağlam yöntem.
+    """
+    from docx.table import Table as _T
+    from docx.text.paragraph import Paragraph as _P
+    from docx.oxml.ns import qn as _qn
+
+    onceki_baslik_no = None
+    for child in doc.element.body.iterchildren():
+        if child.tag == _qn("w:p"):
+            txt = _P(child, doc).text.strip()
+            # "Tablo 6 ..." veya "Tablo.6 ..." veya "Tablo 6\t..."
+            low = txt.lower()
+            if low.startswith("tablo"):
+                # ilk sayıyı çek
+                import re
+                m = re.search(r"tablo[\s\.]*(\d+)", low)
+                onceki_baslik_no = int(m.group(1)) if m else None
+        elif child.tag == _qn("w:tbl"):
+            if onceki_baslik_no == tablo_no:
+                return _T(child, doc)
+            onceki_baslik_no = None  # tablo geçildi, başlık tüketildi
+    return None
 
 
-def _madde(doc, metin: str) -> None:
-    doc.add_paragraph(metin, style="List Bullet")
-
-
-def _seri_basliklari(proje: ProjeVerisi) -> list[str]:
-    """Seri numaralarını başlık olarak döndürür (boşsa P01/P02/P03)."""
+def _seri_nolar(proje: ProjeVerisi) -> list[str]:
     out = []
     for i in range(SERI_SAYISI):
         sno = proje.seriler[i].seri_no if i < len(proje.seriler) else ""
@@ -71,440 +96,376 @@ def _seri_basliklari(proje: ProjeVerisi) -> list[str]:
     return out
 
 
-def _hucre(cell, metin: str, bold: bool = False, ortala: bool = True) -> None:
-    cell.text = ""
-    p = cell.paragraphs[0]
-    if ortala:
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run(str(metin))
-    r.bold = bold
-    r.font.size = Pt(9)
+def _veri_satirlarini_ayarla(tablo, baslik_satir_sayisi: int, gereken_veri_satiri: int):
+    """
+    Tablodaki veri satırı sayısını 'gereken'e eşitler:
+    - fazla satırları siler,
+    - eksikse son veri satırını klonlar.
+    Başlık satırları (ilk N) korunur. Döndürür: veri satırlarının indeks listesi.
+    """
+    mevcut_veri = len(tablo.rows) - baslik_satir_sayisi
+    # fazlaları sil (sondan)
+    while mevcut_veri > gereken_veri_satiri and mevcut_veri > 0:
+        tr = tablo.rows[-1]._tr
+        tr.getparent().remove(tr)
+        mevcut_veri -= 1
+    # eksikleri klonla
+    while mevcut_veri < gereken_veri_satiri:
+        yeni = satir_klonla(tablo, kaynak_index=-1)
+        satiri_bosalt(yeni)
+        mevcut_veri += 1
+    return list(range(baslik_satir_sayisi, baslik_satir_sayisi + gereken_veri_satiri))
 
 
-def _tablo(doc, satir: int, sutun: int):
+# ============================================================================
+# PVP tablolarını doldur
+# ============================================================================
+
+def _doldur_formul(doc, proje: ProjeVerisi) -> None:
+    t = _tablo_basliga_gore(doc, 1)  # Tablo 1
+    if t is None or not proje.hammaddeler:
+        return
+    idxler = _veri_satirlarini_ayarla(t, 1, len(proje.hammaddeler))
+    for ri, h in zip(idxler, proje.hammaddeler):
+        cells = t.rows[ri].cells
+        bold = h.ara_toplam
+        hucre_yaz(cells[0], h.ad, bold=bold)
+        hucre_yaz(cells[1], h.fonksiyon, bold=bold)
+        hucre_yaz(cells[2], "" if h.birim_formul is None else f"{h.birim_formul:g}", bold=bold)
+        hucre_yaz(cells[3], "" if h.yuzde_icerik is None else f"{h.yuzde_icerik:g}", bold=bold)
+        hucre_yaz(cells[4], "" if h.seri_miktar is None else f"{h.seri_miktar:g}", bold=bold)
+
+
+def _doldur_kapsanan(doc, proje: ProjeVerisi) -> None:
+    t = _tablo_basliga_gore(doc, 2)  # Tablo 2
+    if t is None:
+        return
+    # 2 başlık satırı (Ürün İsmi / Film Kaplı Tablet-kg alt başlığı)
+    baslik = 2
+    idxler = _veri_satirlarini_ayarla(t, baslik, SERI_SAYISI)
+    for k, ri in enumerate(idxler):
+        s = proje.seriler[k]
+        cells = t.rows[ri].cells
+        hucre_yaz(cells[0], s.urun_ismi or _urun(proje))
+        hucre_yaz(cells[1], s.seri_no)
+        hucre_yaz(cells[2], s.seri_boyutu_adet)
+        hucre_yaz(cells[3], s.seri_boyutu_kg)
+
+
+def _doldur_risk(doc, proje: ProjeVerisi) -> None:
+    t = _tablo_basliga_gore(doc, 3)  # Tablo 3
+    if t is None or not proje.risk_satirlari:
+        return
+    idxler = _veri_satirlarini_ayarla(t, 1, len(proje.risk_satirlari))
+    for ri, rs in zip(idxler, proje.risk_satirlari):
+        cells = t.rows[ri].cells
+        hucre_yaz(cells[0], str(rs.operasyon_no or ""))
+        hucre_yaz(cells[1], rs.operasyon)
+        hucre_yaz(cells[2], "E" if rs.kritik else "H")
+        hucre_yaz(cells[3], rs.testler)
+        hucre_yaz(cells[4], rs.yorumlar)
+
+
+def _doldur_proses_param(doc, proje: ProjeVerisi) -> None:
+    t = _tablo_basliga_gore(doc, 4)  # Tablo 4
+    if t is None or not proje.proses_parametreleri:
+        return
+    idxler = _veri_satirlarini_ayarla(t, 1, len(proje.proses_parametreleri))
+    for ri, pp in zip(idxler, proje.proses_parametreleri):
+        cells = t.rows[ri].cells
+        hucre_yaz(cells[0], pp.aciklama)
+        hucre_yaz(cells[1], pp.parametre)
+        if len(cells) > 2:
+            hucre_yaz(cells[2], pp.deger)
+
+
+def _doldur_ekipman(doc, proje: ProjeVerisi) -> None:
+    t = _tablo_basliga_gore(doc, 5)  # Tablo 5
+    if t is None or not proje.ekipmanlar:
+        return
+    idxler = _veri_satirlarini_ayarla(t, 1, len(proje.ekipmanlar))
+    for ri, e in zip(idxler, proje.ekipmanlar):
+        cells = t.rows[ri].cells
+        hucre_yaz(cells[0], str(e.operasyon_no or ""))
+        hucre_yaz(cells[1], e.operasyon)
+        hucre_yaz(cells[2], e.ekipman_adi)
+        hucre_yaz(cells[3], e.kapasite)
+
+
+def _doldur_numune(doc, proje: ProjeVerisi) -> None:
+    t = _tablo_basliga_gore(doc, 10)  # Tablo 10
+    if t is None or not proje.numune_plani:
+        return
+    idxler = _veri_satirlarini_ayarla(t, 1, len(proje.numune_plani))
+    for ri, n in zip(idxler, proje.numune_plani):
+        cells = t.rows[ri].cells
+        hucre_yaz(cells[0], str(n.operasyon_no or ""))
+        hucre_yaz(cells[1], n.operasyon)
+        hucre_yaz(cells[2], n.numune_noktasi)
+        hucre_yaz(cells[3], n.toplam_miktar)
+
+
+def _doldur_spek(doc, proje: ProjeVerisi) -> None:
+    """Tablo 6 — spesifikasyon. Yıldız test adının SONUNA eklenir (ayrı sütun yok)."""
+    t = _tablo_basliga_gore(doc, 6)  # Tablo 6
+    kart = proje.spek_karti
+    if t is None or not kart.testler:
+        return
+    idxler = _veri_satirlarini_ayarla(t, 1, len(kart.testler))
+    for ri, test in zip(idxler, kart.testler):
+        cells = t.rows[ri].cells
+        ad = test.ad + ("*" if test.yildizli else "")
+        hucre_yaz(cells[0], str(test.operasyon_no or ""))
+        hucre_yaz(cells[1], test.operasyon)
+        hucre_yaz(cells[2], ad)
+        hucre_yaz(cells[3], test.spesifikasyon.metni_olustur())
+
+
+def _doldur_ipk(doc, proje: ProjeVerisi) -> None:
+    """Tablo 7 — sadece IPK testleri (2 sütun: TESTLER | SPESİFİKASYONLAR)."""
+    ipk = [t for t in proje.spek_karti.testler if t.ipk]
+    t = _tablo_basliga_gore(doc, 7)  # Tablo 7
+    if t is None or not ipk:
+        return
+    # Tablo 7 şablonda 2 sütunlu (TESTLER | SPESİFİKASYONLAR)
+    sut = len(t.columns)
+    idxler = _veri_satirlarini_ayarla(t, 1, len(ipk))
+    for ri, test in zip(idxler, ipk):
+        cells = t.rows[ri].cells
+        if sut == 2:
+            hucre_yaz(cells[0], test.ad)
+            hucre_yaz(cells[1], test.spesifikasyon.metni_olustur())
+        else:
+            # 4 sütunlu varyant: Op No | Operasyon | Test | Spesifikasyon
+            hucre_yaz(cells[0], str(test.operasyon_no or ""))
+            hucre_yaz(cells[1], test.operasyon)
+            hucre_yaz(cells[2], test.ad)
+            hucre_yaz(cells[3], test.spesifikasyon.metni_olustur())
+
+
+# ============================================================================
+# PVR sonuç tabloları (Bölüm 11) — şablonda örnek tablolar var; biz ekleyeceğiz
+# ============================================================================
+# Not: PVR sonuç tabloları çok sayıda ve teste göre değişken. Şablondaki örnek
+# sonuç tablolarını silip, kullanıcı testlerine göre python-docx ile yeniden
+# ekliyoruz (sonuç bölümü en sonda olduğu için bu güvenli).
+
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+
+def _sonuc_basligi(doc, no, ad):
+    p = doc.add_paragraph()
+    r = p.add_run(f"Tablo.{no} {ad} Sonuçları")
+    r.bold = True
+    r.font.size = Pt(10)
+    return p
+
+
+def _yeni_tablo(doc, satir, sutun):
     t = doc.add_table(rows=satir, cols=sutun)
     t.style = "Table Grid"
-    t.alignment = WD_TABLE_ALIGNMENT.CENTER
     return t
 
 
-# ============================================================================
-# Üst bilgi (her sayfada doküman no tablosu)
-# ============================================================================
+def _sr(cells, degerler, bold=False):
+    for c, v in zip(cells, degerler):
+        hucre_yaz(c, v, bold=bold) if c.paragraphs[0].runs else _yaz_bos(c, v, bold)
 
-def _ustbilgi_kur(doc, proje: ProjeVerisi, rapor: bool) -> None:
-    section = doc.sections[0]
-    header = section.header
-    header.is_linked_to_previous = False
-    # mevcut paragrafı temizle
-    for p in list(header.paragraphs):
-        p.clear()
 
-    d = proje.dokuman
-    dok_no = (d.pvr_dokuman_no if rapor else d.pvp_dokuman_no) or "AG-PV-xxx"
-    tip = "RAPOR" if rapor else "PROTOKOL"
-
-    p = header.paragraphs[0]
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run(f"{d.firma_ismi or '{Firma ismi}'}  |  PİLOT ÜRETİM PROSES VALİDASYON {tip}")
-    r.bold = True
+def _yaz_bos(cell, metin, bold=False):
+    p = cell.paragraphs[0]
+    r = p.add_run(str(metin))
+    r.bold = bold
     r.font.size = Pt(9)
-
-    p2 = header.add_paragraph()
-    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r2 = p2.add_run(f"Doküman No: {dok_no}   |   Revizyon No: {d.revizyon_no}   "
-                    f"|   Revizyon Tarihi: {d.revizyon_tarihi}   |   {_urun_adi(proje)}")
-    r2.font.size = Pt(8)
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
-# ============================================================================
-# Ortak (sabit) bölümler
-# ============================================================================
-
-def _dokumantasyon(doc, proje: ProjeVerisi) -> None:
-    _baslik(doc, "1. DÖKÜMANTASYON", 1)
-
-    _baslik(doc, "1.1 Kısaltma ve Tanımlar", 2)
-    t = _tablo(doc, len(sm.KISALTMALAR), 2)
-    for i, (k, v) in enumerate(sm.KISALTMALAR):
-        _hucre(t.rows[i].cells[0], k, bold=True, ortala=False)
-        _hucre(t.rows[i].cells[1], v, ortala=False)
-
-    _baslik(doc, "1.2 Revizyon Detayları", 2)
-    t2 = _tablo(doc, 2, 5)
-    for c, h in enumerate(["Revizyon No", "Sıra No", "Revizyon Tarihi", "Revizyon Nedeni", "Revize Eden"]):
-        _hucre(t2.rows[0].cells[c], h, bold=True)
-    for c, v in enumerate(["U.Y.", "U.Y.", "U.Y.", "İlk Yayın", "U.Y."]):
-        _hucre(t2.rows[1].cells[c], v)
-
-    _baslik(doc, "1.3 Referanslar", 2)
-    for ref in sm.REFERANSLAR:
-        _madde(doc, ref)
-
-
-def _amac_kapsam_sorumluluk(doc, proje: ProjeVerisi) -> None:
-    _baslik(doc, "2. AMAÇ", 1)
-    _p(doc, _doldur(sm.AMAC_GIRIS, proje))
-    _madde(doc, _doldur(sm.AMAC_URUN, proje))
-    _p(doc, "Bu protokol ışığında pilot üretim proses validasyon çalışmasının amacı;")
-    for m in sm.AMAC_MADDELER:
-        _madde(doc, m)
-
-    _baslik(doc, "3. KAPSAM", 1)
-    _p(doc, _doldur(sm.KAPSAM, proje))
-
-    _baslik(doc, "4. SORUMLULUKLAR", 1)
-    for dept, maddeler in sm.SORUMLULUKLAR:
-        _p(doc, dept, bold=True)
-        for m in maddeler:
-            _madde(doc, m)
-
-
-# ============================================================================
-# Bölüm 5 — Formül + Proses Tanımı + Kapsanan Ürünler
-# ============================================================================
-
-def _formul_proses(doc, proje: ProjeVerisi) -> None:
-    _baslik(doc, "5. BİRİM FORMÜL ve PROSES TANIMI", 1)
-
-    # Tablo 1 — Birim/Seri Formül
-    _p(doc, f"Tablo 1 {_urun_adi(proje)} Birim ve Seri Formül", bold=True)
-    if proje.hammaddeler:
-        t = _tablo(doc, len(proje.hammaddeler) + 1, 5)
-        for c, h in enumerate(["Hammadde / Yardımcı Madde", "Fonksiyon", "Birim Formül (mg/tb)", "% İçerik", "kg / seri"]):
-            _hucre(t.rows[0].cells[c], h, bold=True)
-        for i, h in enumerate(proje.hammaddeler, start=1):
-            _hucre(t.rows[i].cells[0], h.ad, ortala=False)
-            _hucre(t.rows[i].cells[1], h.fonksiyon, ortala=False)
-            _hucre(t.rows[i].cells[2], "" if h.birim_formul is None else f"{h.birim_formul:g}")
-            _hucre(t.rows[i].cells[3], "" if h.yuzde_icerik is None else f"{h.yuzde_icerik:g}")
-            _hucre(t.rows[i].cells[4], "" if h.seri_miktar is None else f"{h.seri_miktar:g}")
-
-    # Üretim yöntemi (aşamalar)
-    _p(doc, "")
-    _p(doc, "Üretim Yöntemi:", bold=True)
-    for a in proje.asamalar:
-        baslik = f"Operasyon {a.operasyon_no} — Aşama {a.asama_no}"
-        if a.ipk_etiketi:
-            baslik += f"  ({a.ipk_etiketi})"
-        _p(doc, baslik, bold=True)
-        if a.metin:
-            _p(doc, a.metin)
-        if a.parametreler:
-            tp = _tablo(doc, len(a.parametreler), 2)
-            for i, par in enumerate(a.parametreler):
-                _hucre(tp.rows[i].cells[0], par.etiket, ortala=False)
-                _hucre(tp.rows[i].cells[1], par.deger)
-
-    # 5.2 Kapsanan Ürünler — Tablo 2
-    _baslik(doc, "5.2 Kapsanan Ürünler", 2)
-    _p(doc, "Bu validasyon planı çerçevesinde kapsanan ürünler Tablo 2'de gösterilmiştir.")
-    _p(doc, "Tablo 2 Kapsanan ürünler", bold=True)
-    t2 = _tablo(doc, SERI_SAYISI + 1, 4)
-    for c, h in enumerate(["Ürün İsmi", "Seri No", "Seri Boyutu (adet)", "Seri Boyutu (kg)"]):
-        _hucre(t2.rows[0].cells[c], h, bold=True)
-    for i in range(SERI_SAYISI):
-        s = proje.seriler[i]
-        _hucre(t2.rows[i+1].cells[0], s.urun_ismi or _urun_adi(proje), ortala=False)
-        _hucre(t2.rows[i+1].cells[1], s.seri_no)
-        _hucre(t2.rows[i+1].cells[2], s.seri_boyutu_adet)
-        _hucre(t2.rows[i+1].cells[3], s.seri_boyutu_kg)
-
-
-# ============================================================================
-# Bölüm 6/7 — Risk + Ekipman
-# ============================================================================
-
-def _risk_ekipman(doc, proje: ProjeVerisi) -> None:
-    _baslik(doc, "6. PROSES PARAMETRELERİNİN DEĞERLENDİRMESİ (RİSK ANALİZİ)", 1)
-    _p(doc, "Tablo 3 Proses için Kritik/Kritik olmayan parametrelerin değerlendirilmesi", bold=True)
-    if proje.risk_satirlari:
-        t = _tablo(doc, len(proje.risk_satirlari) + 1, 5)
-        for c, h in enumerate(["Op. No", "Operasyon", "Kritik (E/H)", "Testler", "Yorumlar"]):
-            _hucre(t.rows[0].cells[c], h, bold=True)
-        for i, rs in enumerate(proje.risk_satirlari, start=1):
-            _hucre(t.rows[i].cells[0], rs.operasyon_no or "")
-            _hucre(t.rows[i].cells[1], rs.operasyon, ortala=False)
-            _hucre(t.rows[i].cells[2], "E" if rs.kritik else "H")
-            _hucre(t.rows[i].cells[3], rs.testler, ortala=False)
-            _hucre(t.rows[i].cells[4], rs.yorumlar, ortala=False)
-
-    _baslik(doc, "6.1 Proses Parametreleri", 2)
-    _p(doc, "Tablo 4 Öngörülen Proses Parametreleri", bold=True)
-    if proje.proses_parametreleri:
-        t = _tablo(doc, len(proje.proses_parametreleri) + 1, 3)
-        for c, h in enumerate(["Açıklama", "Parametre", "Değer"]):
-            _hucre(t.rows[0].cells[c], h, bold=True)
-        for i, pp in enumerate(proje.proses_parametreleri, start=1):
-            _hucre(t.rows[i].cells[0], pp.aciklama, ortala=False)
-            _hucre(t.rows[i].cells[1], pp.parametre, ortala=False)
-            _hucre(t.rows[i].cells[2], pp.deger)
-
-    _baslik(doc, "7. EKİPMANLAR", 1)
-    _p(doc, "Tablo 5 Üretimde kullanılacak ekipman listesi", bold=True)
-    if proje.ekipmanlar:
-        t = _tablo(doc, len(proje.ekipmanlar) + 1, 4)
-        for c, h in enumerate(["Op. No", "Operasyon", "Ekipman Adı", "Ekipman Kapasitesi"]):
-            _hucre(t.rows[0].cells[c], h, bold=True)
-        for i, e in enumerate(proje.ekipmanlar, start=1):
-            _hucre(t.rows[i].cells[0], e.operasyon_no or "")
-            _hucre(t.rows[i].cells[1], e.operasyon, ortala=False)
-            _hucre(t.rows[i].cells[2], e.ekipman_adi, ortala=False)
-            _hucre(t.rows[i].cells[3], e.kapasite, ortala=False)
-
-
-# ============================================================================
-# Bölüm 8 — Spesifikasyonlar (Tablo 6 / 7)
-# ============================================================================
-
-def _spesifikasyonlar(doc, proje: ProjeVerisi) -> None:
-    kart = proje.spek_karti
-    _baslik(doc, "8. KABUL KRİTERLERİ", 1)
-    _baslik(doc, "8.1 IPK, Rutin ve Validasyon Testleri Spesifikasyonları", 2)
-    _p(doc, f"Tablo 6 {_urun_adi(proje)}'e ait IPK, Rutin ve Validasyon Testleri Spesifikasyonları", bold=True)
-
-    if kart.testler:
-        t = _tablo(doc, len(kart.testler) + 1, 4)
-        for c, h in enumerate(["Operasyon", "Test", "Spesifikasyon", "*"]):
-            _hucre(t.rows[0].cells[c], h, bold=True)
-        for i, test in enumerate(kart.testler, start=1):
-            _hucre(t.rows[i].cells[0], test.operasyon, ortala=False)
-            _hucre(t.rows[i].cells[1], test.ad, ortala=False)
-            _hucre(t.rows[i].cells[2], test.spesifikasyon.metni_olustur(), ortala=False)
-            _hucre(t.rows[i].cells[3], "*" if test.yildizli else "")
-        _p(doc, "* Proses validasyonu serilerinde uygulanmaktadır.")
-
-    # Tablo 7 — sadece IPK testleri
-    ipk = [t for t in kart.testler if t.ipk]
-    _p(doc, f"Tablo 7 {_urun_adi(proje)}'e ait IPK Testleri Spesifikasyonları", bold=True)
-    if ipk:
-        t = _tablo(doc, len(ipk) + 1, 2)
-        _hucre(t.rows[0].cells[0], "TESTLER", bold=True)
-        _hucre(t.rows[0].cells[1], "SPESİFİKASYONLAR", bold=True)
-        for i, test in enumerate(ipk, start=1):
-            _hucre(t.rows[i].cells[0], test.ad, ortala=False)
-            _hucre(t.rows[i].cells[1], test.spesifikasyon.metni_olustur(), ortala=False)
-    else:
-        _p(doc, "(IPK olarak işaretlenmiş test yok.)")
-
-
-# ============================================================================
-# Bölüm 9/10 — Numune Alma + Stabilite
-# ============================================================================
-
-def _numune_stabilite(doc, proje: ProjeVerisi) -> None:
-    _baslik(doc, "9. NUMUNE ALMA PLANI", 1)
-    _p(doc, f"Tablo 10 {_urun_adi(proje)}'e ait numune alma planı", bold=True)
-    if proje.numune_plani:
-        t = _tablo(doc, len(proje.numune_plani) + 1, 4)
-        for c, h in enumerate(["Op. No", "Operasyon", "Numune Alma Noktası", "Toplam Numune Miktarı"]):
-            _hucre(t.rows[0].cells[c], h, bold=True)
-        for i, n in enumerate(proje.numune_plani, start=1):
-            _hucre(t.rows[i].cells[0], n.operasyon_no or "")
-            _hucre(t.rows[i].cells[1], n.operasyon, ortala=False)
-            _hucre(t.rows[i].cells[2], n.numune_noktasi, ortala=False)
-            _hucre(t.rows[i].cells[3], n.toplam_miktar)
-
-    _baslik(doc, "10. STABİLİTE", 1)
-    _p(doc, sm.STABILITE)
-
-
-# ============================================================================
-# Bölüm 11 — SONUÇLAR (sadece PVR) — 6 tablo tipi
-# ============================================================================
-
-def _sonuc_tablo_tek(doc, proje, test, no) -> None:
+def _ekle_sonuc_tek(doc, proje, test, no):
     seriler = test.sonuc_verisi.get("seriler", ["", "", ""])
-    _p(doc, f"Tablo.{no} {test.ad} Sonuçları", bold=True)
-    t = _tablo(doc, 2, SERI_SAYISI + 1)
-    _hucre(t.rows[0].cells[0], "Numuneler", bold=True)
-    for c, sno in enumerate(_seri_basliklari(proje), start=1):
-        _hucre(t.rows[0].cells[c], f"Seri No: {sno}", bold=True)
-    _hucre(t.rows[1].cells[0], "Sonuç", bold=True)
+    _sonuc_basligi(doc, no, test.ad)
+    t = _yeni_tablo(doc, 3, SERI_SAYISI + 1)
+    _yaz_bos(t.rows[0].cells[0], "Test", True)
+    _yaz_bos(t.rows[0].cells[1], test.ad, False)
+    _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
+    _yaz_bos(t.rows[1].cells[1], test.spesifikasyon.metni_olustur(), False)
+    _yaz_bos(t.rows[2].cells[0], "Sonuç", True)
     for c in range(SERI_SAYISI):
-        _hucre(t.rows[1].cells[c+1], seriler[c] if c < len(seriler) else "", bold=True)
+        _yaz_bos(t.rows[2].cells[c+1], seriler[c] if c < len(seriler) else "", True)
 
 
-def _sonuc_tablo_iki_numune(doc, proje, test, no) -> None:
+def _ekle_sonuc_iki(doc, proje, test, no):
     seriler = test.sonuc_verisi.get("seriler", [])
-    _p(doc, f"Tablo.{no} {test.ad} Sonuçları", bold=True)
-    t = _tablo(doc, 5, SERI_SAYISI + 1)
-    _hucre(t.rows[0].cells[0], "Test", bold=True)
-    _hucre(t.rows[0].cells[1], test.ad, ortala=False)
-    _hucre(t.rows[1].cells[0], "Spesifikasyon", bold=True)
-    _hucre(t.rows[1].cells[1], test.spesifikasyon.metni_olustur(), ortala=False)
-    _hucre(t.rows[2].cells[0], "Numuneler", bold=True)
-    for c, sno in enumerate(_seri_basliklari(proje), start=1):
-        _hucre(t.rows[2].cells[c], f"Seri No: {sno}", bold=True)
-    for ri, anahtar, etiket in [(3, "numune_1", "Numune-1"), (4, "numune_2", "Numune-2")]:
-        _hucre(t.rows[ri].cells[0], etiket, ortala=False)
+    _sonuc_basligi(doc, no, test.ad)
+    t = _yeni_tablo(doc, 6, SERI_SAYISI + 1)
+    _yaz_bos(t.rows[0].cells[0], "Test", True)
+    t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI])
+    _yaz_bos(t.rows[0].cells[1], test.ad)
+    _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
+    t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI])
+    _yaz_bos(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
+    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
+    for c, sno in enumerate(_seri_nolar(proje), 1):
+        _yaz_bos(t.rows[2].cells[c], f"Seri No: {sno}", True)
+    for ri, key, et in [(3, "numune_1", "Numune-1"), (4, "numune_2", "Numune-2"), (5, "sonuc", "Sonuç")]:
+        _yaz_bos(t.rows[ri].cells[0], et, ri == 5)
         for c in range(SERI_SAYISI):
-            v = seriler[c].get(anahtar, "") if c < len(seriler) else ""
-            _hucre(t.rows[ri].cells[c+1], v)
-    # Sonuç satırı ekle
-    sonuc_row = t.add_row()
-    _hucre(sonuc_row.cells[0], "Sonuç", bold=True)
-    for c in range(SERI_SAYISI):
-        v = seriler[c].get("sonuc", "") if c < len(seriler) else ""
-        _hucre(sonuc_row.cells[c+1], v, bold=True)
+            v = seriler[c].get(key, "") if c < len(seriler) else ""
+            _yaz_bos(t.rows[ri].cells[c+1], v, ri == 5)
 
 
-def _sonuc_tablo_on_numune(doc, proje, test, no) -> None:
+def _ekle_sonuc_on(doc, proje, test, no):
     seriler = test.sonuc_verisi.get("seriler", [])
-    _p(doc, f"Tablo.{no} {test.ad} Sonuçları", bold=True)
-    t = _tablo(doc, 13, SERI_SAYISI + 1)
-    _hucre(t.rows[0].cells[0], "Test", bold=True)
-    _hucre(t.rows[0].cells[1], test.ad, ortala=False)
-    _hucre(t.rows[1].cells[0], "Spesifikasyon", bold=True)
-    _hucre(t.rows[1].cells[1], test.spesifikasyon.metni_olustur(), ortala=False)
-    for c, sno in enumerate(_seri_basliklari(proje), start=1):
-        _hucre(t.rows[2].cells[c], f"Seri No: {sno}", bold=True)
-    _hucre(t.rows[2].cells[0], "Numuneler", bold=True)
+    _sonuc_basligi(doc, no, test.ad)
+    t = _yeni_tablo(doc, 14, SERI_SAYISI + 1)
+    # Test ve Spesifikasyon satırlarında değer hücresi tüm seri sütunlarına yayılır
+    _yaz_bos(t.rows[0].cells[0], "Test", True)
+    t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI])
+    _yaz_bos(t.rows[0].cells[1], test.ad)
+    _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
+    t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI])
+    _yaz_bos(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
+    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
+    for c, sno in enumerate(_seri_nolar(proje), 1):
+        _yaz_bos(t.rows[2].cells[c], f"Seri No: {sno}", True)
     for n in range(10):
-        _hucre(t.rows[3+n].cells[0], str(n+1))
+        _yaz_bos(t.rows[3+n].cells[0], str(n+1))
         for c in range(SERI_SAYISI):
             olc = seriler[c].get("olcumler", []) if c < len(seriler) else []
-            _hucre(t.rows[3+n].cells[c+1], olc[n] if n < len(olc) else "")
+            _yaz_bos(t.rows[3+n].cells[c+1], olc[n] if n < len(olc) else "")
+    _yaz_bos(t.rows[13].cells[0], "Ortalama", True)
     for c in range(SERI_SAYISI):
-        ort = seriler[c].get("ortalama", "") if c < len(seriler) else ""
-        _hucre(t.rows[12].cells[c+1], ort, bold=True)
-    _hucre(t.rows[12].cells[0], "Ortalama", bold=True)
+        _yaz_bos(t.rows[13].cells[c+1], seriler[c].get("ortalama", "") if c < len(seriler) else "", True)
 
 
-def _sonuc_tablo_bos_nokta(doc, proje, test, no, numune_sayisi=10) -> None:
+def _ekle_sonuc_bos(doc, proje, test, no, ns=10):
     seriler = test.sonuc_verisi.get("seriler", [])
-    _p(doc, f"Tablo.{no} {test.ad} Sonuçları", bold=True)
-    # üst başlık (2 satır) + numune satırları + ortalama + sonuç
-    t = _tablo(doc, 2, SERI_SAYISI * 3 + 1)
-    _hucre(t.rows[0].cells[0], "Numuneler", bold=True)
-    # Seri başlıkları (her seri 3 nokta kapsar) — basitlik için tek satırda nokta adları
+    _sonuc_basligi(doc, no, test.ad)
+    t = _yeni_tablo(doc, 2 + ns + 2, SERI_SAYISI * 3 + 1)
+    _yaz_bos(t.rows[0].cells[0], "Numuneler", True)
     col = 1
-    for sno in _seri_basliklari(proje):
+    for sno in _seri_nolar(proje):
+        _yaz_bos(t.rows[0].cells[col], f"Seri: {sno}", True); col += 3
+    col = 1
+    for _ in range(SERI_SAYISI):
         for nokta in NOKTA_ADLARI:
-            _hucre(t.rows[1].cells[col], nokta, bold=True)
-            col += 1
-    # seri adlarını üst satıra (3'er hücreye) yaz
-    col = 1
-    for sno in _seri_basliklari(proje):
-        _hucre(t.rows[0].cells[col], f"Seri: {sno}", bold=True)
-        col += 3
-    # ölçüm satırları
-    for n in range(numune_sayisi):
-        row = t.add_row()
-        _hucre(row.cells[0], str(n+1))
+            _yaz_bos(t.rows[1].cells[col], nokta, True); col += 1
+    for n in range(ns):
+        _yaz_bos(t.rows[2+n].cells[0], str(n+1))
         col = 1
         for c in range(SERI_SAYISI):
             for nokta in NOKTA_ADLARI:
                 noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
                 olc = noktalar.get(nokta, {}).get("olcumler", [])
-                _hucre(row.cells[col], olc[n] if n < len(olc) else "")
-                col += 1
-    # ortalama satırı
-    row = t.add_row()
-    _hucre(row.cells[0], "Ortalama", bold=True)
+                _yaz_bos(t.rows[2+n].cells[col], olc[n] if n < len(olc) else ""); col += 1
+    # ortalama
+    _yaz_bos(t.rows[2+ns].cells[0], "Ortalama", True)
     col = 1
     for c in range(SERI_SAYISI):
         for nokta in NOKTA_ADLARI:
             noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
-            _hucre(row.cells[col], noktalar.get(nokta, {}).get("ortalama", ""), bold=True)
-            col += 1
-
-
-def _sonuc_tablo_agirlik(doc, proje, test, no) -> None:
-    seriler = test.sonuc_verisi.get("seriler", [])
-    _p(doc, f"Tablo.{no} {test.ad} Sonuçları", bold=True)
-    t = _tablo(doc, 2, SERI_SAYISI * 3 + 1)
-    _hucre(t.rows[0].cells[0], "Numuneler", bold=True)
+            _yaz_bos(t.rows[2+ns].cells[col], noktalar.get(nokta, {}).get("ortalama", ""), True); col += 1
+    # sonuç (her seri tek)
+    _yaz_bos(t.rows[3+ns].cells[0], "Sonuç", True)
     col = 1
-    for sno in _seri_basliklari(proje):
-        _hucre(t.rows[0].cells[col], f"Seri: {sno}", bold=True)
+    for c in range(SERI_SAYISI):
+        sonuc = seriler[c].get("sonuc", "") if c < len(seriler) else ""
+        _yaz_bos(t.rows[3+ns].cells[col], sonuc, True)
         col += 3
+
+
+def _ekle_sonuc_agirlik(doc, proje, test, no):
+    seriler = test.sonuc_verisi.get("seriler", [])
+    _sonuc_basligi(doc, no, test.ad)
+    t = _yeni_tablo(doc, 2 + 20 + 3, SERI_SAYISI * 3 + 1)
+    _yaz_bos(t.rows[0].cells[0], "Numuneler", True)
     col = 1
-    for sno in _seri_basliklari(proje):
+    for sno in _seri_nolar(proje):
+        _yaz_bos(t.rows[0].cells[col], f"Seri: {sno}", True); col += 3
+    col = 1
+    for _ in range(SERI_SAYISI):
         for nokta in NOKTA_ADLARI:
-            _hucre(t.rows[1].cells[col], nokta, bold=True)
-            col += 1
+            _yaz_bos(t.rows[1].cells[col], nokta, True); col += 1
     for n in range(20):
-        row = t.add_row()
-        _hucre(row.cells[0], str(n+1))
+        _yaz_bos(t.rows[2+n].cells[0], str(n+1))
         col = 1
         for c in range(SERI_SAYISI):
             for nokta in NOKTA_ADLARI:
                 noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
                 olc = noktalar.get(nokta, {}).get("olcumler", [])
-                _hucre(row.cells[col], olc[n] if n < len(olc) else "")
-                col += 1
-    for etiket, anahtar in [("Ortalama", "ortalama"), ("RSD%", "rsd"), ("SD", "sd")]:
-        row = t.add_row()
-        _hucre(row.cells[0], etiket, bold=True)
+                _yaz_bos(t.rows[2+n].cells[col], olc[n] if n < len(olc) else ""); col += 1
+    for k, (et, key) in enumerate([("Ortalama", "ortalama"), ("RSD%", "rsd"), ("SD", "sd")]):
+        _yaz_bos(t.rows[22+k].cells[0], et, True)
         col = 1
         for c in range(SERI_SAYISI):
             for nokta in NOKTA_ADLARI:
                 noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
-                _hucre(row.cells[col], noktalar.get(nokta, {}).get(anahtar, ""), bold=True)
-                col += 1
+                _yaz_bos(t.rows[22+k].cells[col], noktalar.get(nokta, {}).get(key, ""), True); col += 1
 
 
-def _sonuclar(doc, proje: ProjeVerisi) -> None:
-    _baslik(doc, "11. SONUÇLAR", 1)
-    _baslik(doc, "11.1 PROSES VALİDASYONU TEST SONUÇLARI", 2)
+def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
+    """PVR Bölüm 11 sonuç tablolarını belgenin sonuna ekler."""
+    doc.add_page_break()
+    h = doc.add_paragraph()
+    r = h.add_run("11. SONUÇLAR — PROSES VALİDASYONU TEST SONUÇLARI")
+    r.bold = True; r.font.size = Pt(12)
 
     no = 11
     for test in proje.spek_karti.testler:
         tip = test.tablo_tipi
         if tip is TabloTipi.TEK_SONUC:
-            _sonuc_tablo_tek(doc, proje, test, no)
+            _ekle_sonuc_tek(doc, proje, test, no)
         elif tip is TabloTipi.IKI_NUMUNE:
-            _sonuc_tablo_iki_numune(doc, proje, test, no)
+            _ekle_sonuc_iki(doc, proje, test, no)
         elif tip is TabloTipi.ON_NUMUNE:
-            _sonuc_tablo_on_numune(doc, proje, test, no)
+            _ekle_sonuc_on(doc, proje, test, no)
         elif tip is TabloTipi.BOS_NOKTA:
-            _sonuc_tablo_bos_nokta(doc, proje, test, no)
+            _ekle_sonuc_bos(doc, proje, test, no)
         elif tip is TabloTipi.AGIRLIK_TEKDUZELIGI:
-            _sonuc_tablo_agirlik(doc, proje, test, no)
+            _ekle_sonuc_agirlik(doc, proje, test, no)
         else:
-            _sonuc_tablo_tek(doc, proje, test, no)
-        _p(doc, "")
+            _ekle_sonuc_tek(doc, proje, test, no)
+        doc.add_paragraph("")
         no += 1
 
-    _baslik(doc, "12. GENEL DEĞERLENDİRME", 1)
-    _p(doc, f"Sapmalar: {proje.sapmalar}")
-    _p(doc, f"Sonuç: {proje.sonuc_degerlendirme}")
-    if proje.yorum:
-        _p(doc, f"Yorum: {proje.yorum}")
-
 
 # ============================================================================
-# Ana üretim fonksiyonları
+# Ana üretim
 # ============================================================================
 
-def _stil_kur(doc) -> None:
-    st = doc.styles["Normal"]
-    st.font.name = "Arial"
-    st.font.size = Pt(10)
+def _placeholder_eslemeleri(proje: ProjeVerisi, rapor: bool) -> dict[str, str]:
+    d = proje.dokuman
+    urun = _urun(proje)
+    dok_no = (d.pvr_dokuman_no if rapor else d.pvp_dokuman_no) or "AG-PV-xxx"
+    es = {
+        "XxxFilm Kaplı Tablet": urun,
+        "XxxFİLM TABLET": urun.upper(),
+        "AG-PV-xxx": dok_no,
+    }
+    for i in range(SERI_SAYISI):
+        sno = proje.seriler[i].seri_no
+        if sno:
+            es[f"yyy-P0{i+1}"] = sno
+    if d.firma_ismi:
+        es["{Firma ismi}"] = d.firma_ismi
+    return es
 
 
-def belge_uret(proje: ProjeVerisi, rapor: bool) -> Document:
-    doc = Document()
-    _stil_kur(doc)
-    _ustbilgi_kur(doc, proje, rapor)
-
-    _dokumantasyon(doc, proje)
-    _amac_kapsam_sorumluluk(doc, proje)
-    _formul_proses(doc, proje)
-    _risk_ekipman(doc, proje)
-    _spesifikasyonlar(doc, proje)
-    _numune_stabilite(doc, proje)
-
-    if rapor:
-        _sonuclar(doc, proje)
-
-    return doc
+def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
+    belgede_degistir(doc, _placeholder_eslemeleri(proje, rapor))
+    _doldur_formul(doc, proje)
+    _doldur_kapsanan(doc, proje)
+    _doldur_risk(doc, proje)
+    _doldur_proses_param(doc, proje)
+    _doldur_ekipman(doc, proje)
+    _doldur_spek(doc, proje)
+    _doldur_ipk(doc, proje)
+    _doldur_numune(doc, proje)
 
 
 def pvp_uret(proje: ProjeVerisi, cikti_yolu: str | Path) -> Path:
-    """PVP (protokol) Word dosyası üretir."""
-    doc = belge_uret(proje, rapor=False)
+    doc = Document(str(_sablon_yolu("PVP_sablon.docx")))
+    _ortak_doldur(doc, proje, rapor=False)
     yol = Path(cikti_yolu)
     doc.save(str(yol))
     return yol
@@ -512,15 +473,14 @@ def pvp_uret(proje: ProjeVerisi, cikti_yolu: str | Path) -> Path:
 
 def pvr_uret(proje: ProjeVerisi, cikti_yolu: str | Path, veri_uret: bool = True,
              tohum: int | None = None) -> Path:
-    """
-    PVR (rapor) Word dosyası üretir.
-    veri_uret=True ise testlerin sonuç verisi yoksa simüle veri üretir.
-    """
     if veri_uret:
-        for test in proje.spek_karti.testler:
-            if not test.sonuc_verisi:
-                test.sonuc_verisi = vu.test_verisi_uret(test)
-    doc = belge_uret(proje, rapor=True)
+        vu.tum_testleri_uret(proje.spek_karti.testler, tohum=tohum)
+    # PVR, TEMIZ PVP şablonundan üretilir; sonuç tabloları (Bölüm 11) temiz eklenir.
+    # (PVR şablonu zaten dolu örnek sonuç tabloları içerdiği için kullanılmaz —
+    #  aksi halde çift içerik oluşurdu.)
+    doc = Document(str(_sablon_yolu("PVP_sablon.docx")))
+    _ortak_doldur(doc, proje, rapor=True)
+    _doldur_sonuclar(doc, proje)
     yol = Path(cikti_yolu)
     doc.save(str(yol))
     return yol

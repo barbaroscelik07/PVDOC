@@ -92,7 +92,7 @@ def _seri_nolar(proje: ProjeVerisi) -> list[str]:
     out = []
     for i in range(SERI_SAYISI):
         sno = proje.seriler[i].seri_no if i < len(proje.seriler) else ""
-        out.append(sno or f"P{i+1:02d}")
+        out.append(sno or f"YYY-P{i+1:02d}")
     return out
 
 
@@ -125,15 +125,28 @@ def _doldur_formul(doc, proje: ProjeVerisi) -> None:
     t = _tablo_basliga_gore(doc, 1)  # Tablo 1
     if t is None or not proje.hammaddeler:
         return
+    # {adet} placeholder'ı seri boyutundaki adet değeriyle değiştir (başlık hücresi)
+    adet = proje.seriler[0].seri_boyutu_adet if proje.seriler else ""
+    if adet:
+        for row in t.rows:
+            for cell in row.cells:
+                if "{adet}" in cell.text:
+                    from cikti.sablon_doldur import paragraf_metni_degistir
+                    for p in cell.paragraphs:
+                        paragraf_metni_degistir(p, "{adet}", adet)
+
+    son = len(proje.hammaddeler) - 1
     idxler = _veri_satirlarini_ayarla(t, 1, len(proje.hammaddeler))
-    for ri, h in zip(idxler, proje.hammaddeler):
+    for sira, (ri, h) in enumerate(zip(idxler, proje.hammaddeler)):
         cells = t.rows[ri].cells
-        bold = h.ara_toplam
+        # Son satır VEYA ara_toplam satırı kalın
+        bold = h.ara_toplam or (sira == son)
         hucre_yaz(cells[0], h.ad, bold=bold)
         hucre_yaz(cells[1], h.fonksiyon, bold=bold)
-        hucre_yaz(cells[2], "" if h.birim_formul is None else f"{h.birim_formul:g}", bold=bold)
+        # Birim formül HER ZAMAN 3 ondalık (3 -> 3.000)
+        hucre_yaz(cells[2], "" if h.birim_formul is None else f"{h.birim_formul:.3f}", bold=bold)
         hucre_yaz(cells[3], "" if h.yuzde_icerik is None else f"{h.yuzde_icerik:g}", bold=bold)
-        hucre_yaz(cells[4], "" if h.seri_miktar is None else f"{h.seri_miktar:g}", bold=bold)
+        hucre_yaz(cells[4], "" if h.seri_miktar is None else f"{h.seri_miktar:.3f}", bold=bold)
 
 
 def _doldur_kapsanan(doc, proje: ProjeVerisi) -> None:
@@ -206,19 +219,43 @@ def _doldur_numune(doc, proje: ProjeVerisi) -> None:
 
 
 def _doldur_spek(doc, proje: ProjeVerisi) -> None:
-    """Tablo 6 — spesifikasyon. Yıldız test adının SONUNA eklenir (ayrı sütun yok)."""
+    """Tablo 6 — spesifikasyon. Yıldız test adının SONUNA; alt satırlar ayrı satır."""
     t = _tablo_basliga_gore(doc, 6)  # Tablo 6
     kart = proje.spek_karti
     if t is None or not kart.testler:
         return
-    idxler = _veri_satirlarini_ayarla(t, 1, len(kart.testler))
-    for ri, test in zip(idxler, kart.testler):
+
+    # Her testin kaç satır kaplayacağını hesapla (ana + alt satırlar + açıklama)
+    satir_planı = []  # (test, alt_satir_listesi)  -> toplam satır
+    toplam = 0
+    for test in kart.testler:
+        ekstra = list(test.alt_satirlar)
+        if test.aciklama_etiketi:
+            ekstra = ekstra + [(test.aciklama_etiketi, test.aciklama_spek)]
+        satir_planı.append((test, ekstra))
+        toplam += 1 + len(ekstra)
+
+    idxler = _veri_satirlarini_ayarla(t, 1, toplam)
+    it = iter(idxler)
+    for test, ekstra in satir_planı:
+        # ana satır
+        ri = next(it)
         cells = t.rows[ri].cells
         ad = test.ad + ("*" if test.yildizli else "")
         hucre_yaz(cells[0], str(test.operasyon_no or ""))
         hucre_yaz(cells[1], test.operasyon)
         hucre_yaz(cells[2], ad)
-        hucre_yaz(cells[3], test.spesifikasyon.metni_olustur())
+        # mikrobiyolojik/ağırlık ana satırında spek hücresi boş (alt satırlarda dolu)
+        ana_spek = "" if ekstra else test.spesifikasyon.metni_olustur()
+        hucre_yaz(cells[3], ana_spek)
+        # alt satırlar
+        for etiket, spek_metni in ekstra:
+            ri2 = next(it)
+            c2 = t.rows[ri2].cells
+            hucre_yaz(c2[0], "")
+            hucre_yaz(c2[1], "")
+            hucre_yaz(c2[2], etiket)
+            hucre_yaz(c2[3], spek_metni)
 
 
 def _doldur_ipk(doc, proje: ProjeVerisi) -> None:
@@ -281,126 +318,218 @@ def _yaz_bos(cell, metin, bold=False):
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
+def _yaz_sol(cell, metin, bold=False):
+    """Sola dayalı hücre yazımı (Test/Spesifikasyon değer hücreleri için)."""
+    p = cell.paragraphs[0]
+    r = p.add_run(str(metin))
+    r.bold = bold
+    r.font.size = Pt(9)
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+
+def _numuneler_basligi(t, ust_satir, alt_satir, proje):
+    """
+    Resimlerdeki ortak yapı:
+      | Numuneler | Analiz Sonuçları (3 sütuna birleşik)        |
+      |           | Seri No: YYY-P01 | YYY-P02 | YYY-P03         |
+    ust_satir: 'Numuneler' + 'Analiz Sonuçları' satırının indeksi
+    alt_satir: Seri No satırının indeksi
+    """
+    _yaz_bos(t.rows[ust_satir].cells[0], "Numuneler", True)
+    t.rows[ust_satir].cells[1].merge(t.rows[ust_satir].cells[SERI_SAYISI])
+    _yaz_bos(t.rows[ust_satir].cells[1], "Analiz Sonuçları", True)
+    # 'Numuneler' hücresini iki satıra dikey birleştir
+    t.rows[ust_satir].cells[0].merge(t.rows[alt_satir].cells[0])
+    for c, sno in enumerate(_seri_nolar(proje), 1):
+        _yaz_bos(t.rows[alt_satir].cells[c], f"Seri No: {sno}", True)
+
+
 def _ekle_sonuc_tek(doc, proje, test, no):
+    """Görünüş/Teşhis/Elek: Test | Spesifikasyon | Numuneler+Analiz | Sonuç."""
     seriler = test.sonuc_verisi.get("seriler", ["", "", ""])
     _sonuc_basligi(doc, no, test.ad)
-    t = _yeni_tablo(doc, 3, SERI_SAYISI + 1)
+    t = _yeni_tablo(doc, 5, SERI_SAYISI + 1)
     _yaz_bos(t.rows[0].cells[0], "Test", True)
-    _yaz_bos(t.rows[0].cells[1], test.ad, False)
+    t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI])
+    _yaz_sol(t.rows[0].cells[1], test.ad)
     _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
-    _yaz_bos(t.rows[1].cells[1], test.spesifikasyon.metni_olustur(), False)
-    _yaz_bos(t.rows[2].cells[0], "Sonuç", True)
+    t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI])
+    _yaz_sol(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
+    _numuneler_basligi(t, 2, 3, proje)
+    _yaz_bos(t.rows[4].cells[0], "Sonuç", True)
     for c in range(SERI_SAYISI):
-        _yaz_bos(t.rows[2].cells[c+1], seriler[c] if c < len(seriler) else "", True)
+        _yaz_bos(t.rows[4].cells[c+1], seriler[c] if c < len(seriler) else "", True)
 
 
 def _ekle_sonuc_iki(doc, proje, test, no):
+    """Miktar Tayini / İmpurite: Numune-1/Numune-2/Sonuç."""
     seriler = test.sonuc_verisi.get("seriler", [])
     _sonuc_basligi(doc, no, test.ad)
-    t = _yeni_tablo(doc, 6, SERI_SAYISI + 1)
+    t = _yeni_tablo(doc, 7, SERI_SAYISI + 1)
     _yaz_bos(t.rows[0].cells[0], "Test", True)
     t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI])
-    _yaz_bos(t.rows[0].cells[1], test.ad)
+    _yaz_sol(t.rows[0].cells[1], test.ad)
     _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
     t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI])
-    _yaz_bos(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
-    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
-    for c, sno in enumerate(_seri_nolar(proje), 1):
-        _yaz_bos(t.rows[2].cells[c], f"Seri No: {sno}", True)
-    for ri, key, et in [(3, "numune_1", "Numune-1"), (4, "numune_2", "Numune-2"), (5, "sonuc", "Sonuç")]:
-        _yaz_bos(t.rows[ri].cells[0], et, ri == 5)
+    _yaz_sol(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
+    _numuneler_basligi(t, 2, 3, proje)
+    for ri, key, et in [(4, "numune_1", "Numune-1"), (5, "numune_2", "Numune-2"), (6, "sonuc", "Sonuç")]:
+        _yaz_sol(t.rows[ri].cells[0], et, ri == 6)
         for c in range(SERI_SAYISI):
             v = seriler[c].get(key, "") if c < len(seriler) else ""
-            _yaz_bos(t.rows[ri].cells[c+1], v, ri == 5)
+            _yaz_bos(t.rows[ri].cells[c+1], v, ri == 6)
+    # İmpurite ise T.E. notu
+    if "impurite" in test.ad.lower() or "ilgili bileşik" in test.ad.lower() or "imp." in test.ad.lower():
+        np = doc.add_paragraph()
+        nr = np.add_run("T.E.: Tespit edilemedi.")
+        nr.italic = True; nr.font.size = Pt(8)
 
 
 def _ekle_sonuc_on(doc, proje, test, no):
+    """Karışım Tekdüzeliği: 1-10 + Ortalama."""
     seriler = test.sonuc_verisi.get("seriler", [])
     _sonuc_basligi(doc, no, test.ad)
-    t = _yeni_tablo(doc, 14, SERI_SAYISI + 1)
-    # Test ve Spesifikasyon satırlarında değer hücresi tüm seri sütunlarına yayılır
+    t = _yeni_tablo(doc, 15, SERI_SAYISI + 1)
     _yaz_bos(t.rows[0].cells[0], "Test", True)
     t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI])
-    _yaz_bos(t.rows[0].cells[1], test.ad)
+    _yaz_sol(t.rows[0].cells[1], test.ad)
     _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
     t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI])
-    _yaz_bos(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
-    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
-    for c, sno in enumerate(_seri_nolar(proje), 1):
-        _yaz_bos(t.rows[2].cells[c], f"Seri No: {sno}", True)
+    _yaz_sol(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
+    _numuneler_basligi(t, 2, 3, proje)
     for n in range(10):
-        _yaz_bos(t.rows[3+n].cells[0], str(n+1))
+        _yaz_bos(t.rows[4+n].cells[0], str(n+1))
         for c in range(SERI_SAYISI):
             olc = seriler[c].get("olcumler", []) if c < len(seriler) else []
-            _yaz_bos(t.rows[3+n].cells[c+1], olc[n] if n < len(olc) else "")
-    _yaz_bos(t.rows[13].cells[0], "Ortalama", True)
+            _yaz_bos(t.rows[4+n].cells[c+1], olc[n] if n < len(olc) else "")
+    _yaz_bos(t.rows[14].cells[0], "Ortalama", True)
     for c in range(SERI_SAYISI):
-        _yaz_bos(t.rows[13].cells[c+1], seriler[c].get("ortalama", "") if c < len(seriler) else "", True)
+        _yaz_bos(t.rows[14].cells[c+1], seriler[c].get("ortalama", "") if c < len(seriler) else "", True)
 
 
 def _ekle_sonuc_bos(doc, proje, test, no, ns=10):
+    """Sertlik/Kalınlık/Çap/Dağılma/Dissolüsyon: Baş/Orta/Son × seri + Sonuç."""
     seriler = test.sonuc_verisi.get("seriler", [])
     _sonuc_basligi(doc, no, test.ad)
-    t = _yeni_tablo(doc, 2 + ns + 2, SERI_SAYISI * 3 + 1)
-    _yaz_bos(t.rows[0].cells[0], "Numuneler", True)
+    # Test + Spesifikasyon + Seri başlık + nokta başlık + ns ölçüm + Ortalama + Sonuç
+    t = _yeni_tablo(doc, 4 + ns + 2, SERI_SAYISI * 3 + 1)
+    _yaz_bos(t.rows[0].cells[0], "Test", True)
+    t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI * 3])
+    _yaz_sol(t.rows[0].cells[1], test.ad)
+    _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
+    t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI * 3])
+    _yaz_sol(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
+    # seri başlıkları
+    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
     col = 1
     for sno in _seri_nolar(proje):
-        _yaz_bos(t.rows[0].cells[col], f"Seri: {sno}", True); col += 3
+        a = t.rows[2].cells[col]; a.merge(t.rows[2].cells[col+2])
+        _yaz_bos(a, f"Seri No: {sno}", True); col += 3
+    # 'Numuneler' dikey birleştir
+    t.rows[2].cells[0].merge(t.rows[3].cells[0])
     col = 1
     for _ in range(SERI_SAYISI):
         for nokta in NOKTA_ADLARI:
-            _yaz_bos(t.rows[1].cells[col], nokta, True); col += 1
+            _yaz_bos(t.rows[3].cells[col], nokta, True); col += 1
     for n in range(ns):
-        _yaz_bos(t.rows[2+n].cells[0], str(n+1))
+        _yaz_bos(t.rows[4+n].cells[0], str(n+1))
         col = 1
         for c in range(SERI_SAYISI):
             for nokta in NOKTA_ADLARI:
                 noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
                 olc = noktalar.get(nokta, {}).get("olcumler", [])
-                _yaz_bos(t.rows[2+n].cells[col], olc[n] if n < len(olc) else ""); col += 1
-    # ortalama
-    _yaz_bos(t.rows[2+ns].cells[0], "Ortalama", True)
+                _yaz_bos(t.rows[4+n].cells[col], olc[n] if n < len(olc) else ""); col += 1
+    _yaz_bos(t.rows[4+ns].cells[0], "Ortalama", True)
     col = 1
     for c in range(SERI_SAYISI):
         for nokta in NOKTA_ADLARI:
             noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
-            _yaz_bos(t.rows[2+ns].cells[col], noktalar.get(nokta, {}).get("ortalama", ""), True); col += 1
-    # sonuç (her seri tek)
-    _yaz_bos(t.rows[3+ns].cells[0], "Sonuç", True)
+            _yaz_bos(t.rows[4+ns].cells[col], noktalar.get(nokta, {}).get("ortalama", ""), True); col += 1
+    _yaz_bos(t.rows[5+ns].cells[0], "Sonuç", True)
     col = 1
     for c in range(SERI_SAYISI):
         sonuc = seriler[c].get("sonuc", "") if c < len(seriler) else ""
-        _yaz_bos(t.rows[3+ns].cells[col], sonuc, True)
-        col += 3
+        a = t.rows[5+ns].cells[col]; a.merge(t.rows[5+ns].cells[col+2])
+        _yaz_bos(a, sonuc, True); col += 3
 
 
 def _ekle_sonuc_agirlik(doc, proje, test, no):
+    """Ağırlık Tekdüzeliği: 20 numune × Baş/Orta/Son × seri + Ort/RSD/SD."""
     seriler = test.sonuc_verisi.get("seriler", [])
     _sonuc_basligi(doc, no, test.ad)
-    t = _yeni_tablo(doc, 2 + 20 + 3, SERI_SAYISI * 3 + 1)
-    _yaz_bos(t.rows[0].cells[0], "Numuneler", True)
+    t = _yeni_tablo(doc, 4 + 20 + 3, SERI_SAYISI * 3 + 1)
+    _yaz_bos(t.rows[0].cells[0], "Test", True)
+    t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI * 3])
+    _yaz_sol(t.rows[0].cells[1], test.ad)
+    _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
+    t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI * 3])
+    _yaz_sol(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
+    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
     col = 1
     for sno in _seri_nolar(proje):
-        _yaz_bos(t.rows[0].cells[col], f"Seri: {sno}", True); col += 3
+        a = t.rows[2].cells[col]; a.merge(t.rows[2].cells[col+2])
+        _yaz_bos(a, f"Seri No: {sno}", True); col += 3
+    t.rows[2].cells[0].merge(t.rows[3].cells[0])
     col = 1
     for _ in range(SERI_SAYISI):
         for nokta in NOKTA_ADLARI:
-            _yaz_bos(t.rows[1].cells[col], nokta, True); col += 1
+            _yaz_bos(t.rows[3].cells[col], nokta, True); col += 1
     for n in range(20):
-        _yaz_bos(t.rows[2+n].cells[0], str(n+1))
+        _yaz_bos(t.rows[4+n].cells[0], str(n+1))
         col = 1
         for c in range(SERI_SAYISI):
             for nokta in NOKTA_ADLARI:
                 noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
                 olc = noktalar.get(nokta, {}).get("olcumler", [])
-                _yaz_bos(t.rows[2+n].cells[col], olc[n] if n < len(olc) else ""); col += 1
+                _yaz_bos(t.rows[4+n].cells[col], olc[n] if n < len(olc) else ""); col += 1
     for k, (et, key) in enumerate([("Ortalama", "ortalama"), ("RSD%", "rsd"), ("SD", "sd")]):
-        _yaz_bos(t.rows[22+k].cells[0], et, True)
+        _yaz_bos(t.rows[24+k].cells[0], et, True)
         col = 1
         for c in range(SERI_SAYISI):
             for nokta in NOKTA_ADLARI:
                 noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
-                _yaz_bos(t.rows[22+k].cells[col], noktalar.get(nokta, {}).get(key, ""), True); col += 1
+                _yaz_bos(t.rows[24+k].cells[col], noktalar.get(nokta, {}).get(key, ""), True); col += 1
+
+
+def _ekle_sonuc_matris(doc, proje, test, no):
+    """
+    Mikrobiyolojik Kontrol (resimdeki Tablo 33/34):
+      Test | Mikrobiyolojik Kontrol
+      Spesifikasyon | (3 alt satır spek, birleşik)
+      Numuneler/Analiz Sonuçları | Seri No
+      -Toplam Aerobik... | <10 cfu/g × 3
+      -Küf ve Maya...    | <10 cfu/g × 3
+      -E. coli           | 0 cfu/g × 3
+    Sonuç satırı YOK (kullanıcı kararı).
+    """
+    _sonuc_basligi(doc, no, test.ad)
+    alt = test.alt_satirlar or [("-Toplam Aerobik Mikroorganizma Sayısı", "≤10³ cfu/g"),
+                                ("-Küf ve Maya Sayısı", "≤10² cfu/g"), ("-E. coli", "0 cfu/g")]
+    # Test(1) + Spesifikasyon(len alt, birleşik) + Numuneler/SeriNo(2) + ölçüm(len alt)
+    n_spec = len(alt)
+    t = _yeni_tablo(doc, 1 + n_spec + 2 + len(alt), SERI_SAYISI + 1)
+    r = 0
+    _yaz_bos(t.rows[r].cells[0], "Test", True)
+    t.rows[r].cells[1].merge(t.rows[r].cells[SERI_SAYISI])
+    _yaz_sol(t.rows[r].cells[1], test.ad); r += 1
+    # Spesifikasyon: sol hücre dikey birleşik, sağda alt satır spek'leri
+    spec_bas = r
+    for i, (etiket, spek_metni) in enumerate(alt):
+        t.rows[r].cells[1].merge(t.rows[r].cells[SERI_SAYISI])
+        _yaz_sol(t.rows[r].cells[1], f"{etiket} : {spek_metni}")
+        r += 1
+    _yaz_bos(t.rows[spec_bas].cells[0], "Spesifikasyon", True)
+    t.rows[spec_bas].cells[0].merge(t.rows[r-1].cells[0])
+    # Numuneler / Analiz Sonuçları + Seri No
+    _numuneler_basligi(t, r, r+1, proje); r += 2
+    # ölçüm satırları
+    for etiket, spek_metni in alt:
+        _yaz_sol(t.rows[r].cells[0], etiket)
+        for c in range(SERI_SAYISI):
+            # değer: aerobik/küf <10 cfu/g, e.coli 0 cfu/g
+            deger = "0 cfu/g" if "coli" in etiket.lower() else "<10 cfu/g"
+            _yaz_bos(t.rows[r].cells[c+1], deger)
+        r += 1
 
 
 def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
@@ -413,7 +542,9 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
     no = 11
     for test in proje.spek_karti.testler:
         tip = test.tablo_tipi
-        if tip is TabloTipi.TEK_SONUC:
+        if test.mikrobiyolojik or tip is TabloTipi.MATRIS:
+            _ekle_sonuc_matris(doc, proje, test, no)
+        elif tip is TabloTipi.TEK_SONUC:
             _ekle_sonuc_tek(doc, proje, test, no)
         elif tip is TabloTipi.IKI_NUMUNE:
             _ekle_sonuc_iki(doc, proje, test, no)
@@ -427,6 +558,16 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
             _ekle_sonuc_tek(doc, proje, test, no)
         doc.add_paragraph("")
         no += 1
+
+    # Genel Değerlendirme HER ZAMAN en sonda
+    doc.add_paragraph("")
+    gh = doc.add_paragraph()
+    gr = gh.add_run("12. GENEL DEĞERLENDİRME")
+    gr.bold = True; gr.font.size = Pt(12)
+    doc.add_paragraph(f"Sapmalar: {proje.sapmalar}")
+    doc.add_paragraph(f"Sonuç: {proje.sonuc_degerlendirme}")
+    if proje.yorum:
+        doc.add_paragraph(f"Yorum: {proje.yorum}")
 
 
 # ============================================================================
@@ -451,6 +592,56 @@ def _placeholder_eslemeleri(proje: ProjeVerisi, rapor: bool) -> dict[str, str]:
     return es
 
 
+def _tolerans_oran(tolerans: str):
+    """'±%5' / '%7.5' / '±%10' gibi metinden oranı (0.05) çıkarır."""
+    import re
+    m = re.search(r"(\d+(?:[.,]\d+)?)", tolerans or "")
+    if not m:
+        return None
+    return float(m.group(1).replace(",", ".")) / 100.0
+
+
+def _miktar_spek_uret(hedef: float, tolerans: str, birim: str) -> str:
+    """Hedef + tolerans → '10.0 mg/f.tab ±%7.5 (9.25 – 10.75 mg/f.tab)'."""
+    oran = _tolerans_oran(tolerans)
+    if oran is None:
+        return f"{hedef:g} {birim}".strip()
+    alt = round(hedef * (1 - oran), 4)
+    ust = round(hedef * (1 + oran), 4)
+    return f"{hedef:g} {birim} {tolerans} ({alt:g} – {ust:g} {birim})".strip()
+
+
+def _doldur_tablo89(doc, proje: ProjeVerisi) -> None:
+    """
+    Tablo 8 (Serbest Bırakma) ve Tablo 9 (Raf Ömrü): Tablo 6'daki bitmiş ürün
+    testlerini temel alır; Miktar Tayini toleransı her tabloda farklıdır.
+    """
+    kart = proje.spek_karti
+    if not kart.tablo89_ekle:
+        return
+    bitmis = [t for t in kart.testler
+              if t.operasyon in ("Tablet Baskı", "Film Kaplama", "Dolum")
+              and not t.mikrobiyolojik]
+    for tablo_no, tol in [(8, kart.serbest_birakma_tolerans), (9, kart.raf_omru_tolerans)]:
+        t = _tablo_basliga_gore(doc, tablo_no)
+        if t is None or not bitmis:
+            continue
+        sut = len(t.columns)
+        idxler = _veri_satirlarini_ayarla(t, 1, len(bitmis))
+        for ri, test in zip(idxler, bitmis):
+            cells = t.rows[ri].cells
+            spek_metni = test.spesifikasyon.metni_olustur()
+            if "miktar tayini" in test.ad.lower() and test.spesifikasyon.hedef_deger:
+                spek_metni = _miktar_spek_uret(
+                    test.spesifikasyon.hedef_deger, tol, test.spesifikasyon.birim)
+            if sut == 2:
+                hucre_yaz(cells[0], test.ad)
+                hucre_yaz(cells[1], spek_metni)
+            else:
+                hucre_yaz(cells[0], test.ad)
+                hucre_yaz(cells[-1], spek_metni)
+
+
 def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
     belgede_degistir(doc, _placeholder_eslemeleri(proje, rapor))
     _doldur_formul(doc, proje)
@@ -460,6 +651,7 @@ def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
     _doldur_ekipman(doc, proje)
     _doldur_spek(doc, proje)
     _doldur_ipk(doc, proje)
+    _doldur_tablo89(doc, proje)
     _doldur_numune(doc, proje)
 
 

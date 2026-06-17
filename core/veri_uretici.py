@@ -56,18 +56,17 @@ def rsd_yuzde(degerler: list[float]) -> float:
 def _uretim_araligi(spek: Spesifikasyon) -> tuple[float, float]:
     """
     Spesifikasyondan, içine güvenle değer üretilebilecek (alt, üst) aralık.
-    Limitin tam kenarına yapışmamak için hafif içeri çekilir.
+    Öncelik: açıkça girilen alt_limit/ust_limit (sabit sonuç metni olsa bile).
     """
-    if spek.limit_turu is LimitTuru.ARALIK and spek.alt_limit is not None and spek.ust_limit is not None:
+    # 1) Kullanıcı alt/üst limit girdiyse her zaman onu kullan
+    if spek.alt_limit is not None and spek.ust_limit is not None:
         genislik = spek.ust_limit - spek.alt_limit
         pay = genislik * 0.20
         return spek.alt_limit + pay, spek.ust_limit - pay
     if spek.limit_turu is LimitTuru.MINIMUM and spek.minimum_deger is not None:
-        # minimumun biraz üstünden, makul bir bant
         taban = spek.minimum_deger
         return taban * 1.05 + 0.01, taban * 1.05 + max(taban * 0.5, 1.0)
     if spek.limit_turu is LimitTuru.MAKSIMUM and spek.maksimum_deger is not None:
-        # maksimumun altında, 0'a yakın sağlıklı bant
         tavan = spek.maksimum_deger
         return tavan * 0.05, tavan * 0.6
     if spek.hedef_deger is not None:
@@ -95,13 +94,17 @@ def _tek_sonuc(spek: Spesifikasyon, test_adi: str = "") -> dict:
     """
     ad = test_adi.lower()
     if spek.limit_turu in (LimitTuru.METIN, LimitTuru.BILGI):
+        # Görünüş/Teşhis → metin sonuç
         if "görünüş" in ad or "gorunus" in ad:
-            deg = "Uygun"
-        elif "teşhis" in ad or "teshis" in ad:
-            deg = "Pozitif"
-        else:
-            deg = spek.sabit_sonuc or "Uygun"
-        return {"seriler": [deg for _ in range(SERI_SAYISI)]}
+            return {"seriler": ["Uygun" for _ in range(SERI_SAYISI)]}
+        if "teşhis" in ad or "teshis" in ad:
+            return {"seriler": ["Pozitif" for _ in range(SERI_SAYISI)]}
+        # Elek/Dansite gibi sayısal sonuç: alt/üst limit verilmişse DEĞER üret
+        if spek.alt_limit is not None and spek.ust_limit is not None:
+            alt, ust = _uretim_araligi(spek)
+            return {"seriler": [f"{_deger(spek, alt, ust)} {spek.birim}".strip()
+                                for _ in range(SERI_SAYISI)]}
+        return {"seriler": [(spek.sabit_sonuc or "Uygun") for _ in range(SERI_SAYISI)]}
     alt, ust = _uretim_araligi(spek)
     return {"seriler": [f"{_deger(spek, alt, ust)} {spek.birim}".strip()
                         for _ in range(SERI_SAYISI)]}

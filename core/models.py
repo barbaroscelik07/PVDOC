@@ -169,8 +169,23 @@ class Test:
     yildizli: bool = False            # "*": proses validasyonu serilerinde uygulanır
     etkin_madde_index: int = -1       # hangi etkin maddeye ait (-1 = ürüne ait genel)
 
-    # Üretilen ham sonuç verisi (PVR). Yapı tablo_tipi'ne göre değişir;
-    # core/veri_uretici.py doldurur, m8_sonuclar gözden geçirir.
+    # Alt satırlar: ana test başlık satırının altına gelen, kendi spesifikasyonu
+    # olan satırlar. Örn. Mikrobiyolojik Kontrol:
+    #   ("-Toplam Aerobik Mikroorganizma Sayısı", "≤10³ cfu/g")
+    # Her öğe (etiket, spek_metni).
+    alt_satirlar: list[tuple] = field(default_factory=list)
+
+    # Açıklama satırı: ana başlığın altına gelen, sadece açıklama içeren satır.
+    # Örn. Ağırlık Tekdüzeliği:
+    #   ("—20 tablette tek tek tabletlerden maksimum 2 tanesi bu limitten sapabilir.",
+    #    "≤ 270.75 veya ≥ 299.25 mg")
+    aciklama_etiketi: str = ""
+    aciklama_spek: str = ""
+
+    # Bu test özel bir kalıp mı (mikrobiyolojik)? Sonuç hep "Uygun".
+    mikrobiyolojik: bool = False
+
+    # Üretilen ham sonuç verisi (PVR). Yapı tablo_tipi'ne göre değişir.
     sonuc_verisi: dict[str, Any] = field(default_factory=dict)
 
 
@@ -283,7 +298,13 @@ class SpekKarti:
     etkin_maddeler: list[EtkinMadde] = field(default_factory=list)
     testler: list[Test] = field(default_factory=list)
 
-    # Serbest bırakma / raf ömrü tabloları (manuel, kopyala-yapıştır) — sonra doldurulur
+    # Tablo 8 (Serbest Bırakma) / Tablo 9 (Raf Ömrü) otomatik üretilsin mi?
+    # Miktar Tayini toleransı bu tablolarda farklıdır; aşağıdaki toleranslar kullanılır.
+    tablo89_ekle: bool = False
+    serbest_birakma_tolerans: str = "±%5"     # Tablo 8 miktar tayini toleransı
+    raf_omru_tolerans: str = "±%7.5"          # Tablo 9 miktar tayini toleransı
+
+    # Eski alanlar (manuel/kopyala-yapıştır) — ileride kullanılabilir
     serbest_birakma: list[dict[str, str]] = field(default_factory=list)
     raf_omru: list[dict[str, str]] = field(default_factory=list)
 

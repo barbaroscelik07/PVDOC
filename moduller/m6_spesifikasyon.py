@@ -84,7 +84,25 @@ class SpekModulu(QWidget):
         self.cmb_form.currentIndexChanged.connect(self._form_degisti)
         form_satir.addWidget(self.cmb_form)
         form_satir.addStretch(1)
+        self.chk_t89 = QCheckBox("Tablo 8/9'u (Serbest Bırakma / Raf Ömrü) otomatik üret")
+        self.chk_t89.toggled.connect(lambda v: setattr(self.kart, "tablo89_ekle", v))
+        form_satir.addWidget(self.chk_t89)
         kok.addLayout(form_satir)
+
+        # Tablo 8/9 tolerans alanları
+        tol_satir = QHBoxLayout()
+        tol_satir.addWidget(QLabel("Serbest Bırakma toleransı:"))
+        self.in_t8_tol = QLineEdit("±%5")
+        self.in_t8_tol.setMaximumWidth(90)
+        self.in_t8_tol.textChanged.connect(lambda t: setattr(self.kart, "serbest_birakma_tolerans", t.strip()))
+        tol_satir.addWidget(self.in_t8_tol)
+        tol_satir.addWidget(QLabel("Raf Ömrü toleransı:"))
+        self.in_t9_tol = QLineEdit("±%7.5")
+        self.in_t9_tol.setMaximumWidth(90)
+        self.in_t9_tol.textChanged.connect(lambda t: setattr(self.kart, "raf_omru_tolerans", t.strip()))
+        tol_satir.addWidget(self.in_t9_tol)
+        tol_satir.addStretch(1)
+        kok.addLayout(tol_satir)
 
         kok.addWidget(ayirici())
 
@@ -174,8 +192,7 @@ class SpekModulu(QWidget):
         self.cmb_limit.currentIndexChanged.connect(self._limit_turu_degisti)
         izgara.addWidget(self.cmb_limit, s, 1); s += 1
 
-        # Dinamik giriş alanları — QLineEdit ile ondalık BİREBİR korunur
-        # (5,0 yazarsan 5,0 kalır; QDoubleSpinBox 5,000 yapardı).
+        # Dinamik giriş alanları — QLineEdit ile ondalık BİREBİR korunur.
         self.in_hedef = QLineEdit()
         self.in_alt = QLineEdit()
         self.in_ust = QLineEdit()
@@ -185,23 +202,28 @@ class SpekModulu(QWidget):
         self.in_tol.setPlaceholderText("örn. ±%5  (boş bırakılabilir)")
         for le in (self.in_hedef, self.in_alt, self.in_ust, self.in_min, self.in_maks):
             le.setPlaceholderText("sayı (örn. 5,0)")
+        # Sabit sonuç: spesifikasyon hücresinde GÖRÜNECEK metin (elle yazılır).
         self.in_metin = QLineEdit()
-        self.in_metin.setPlaceholderText("örn. Beyaz renkli toz / Pozitif / Uygun")
+        self.in_metin.setPlaceholderText("örn. 10.0 mg/f.tab ±%5 (9.5 – 10.5 mg/f.tab)")
         self.in_birim = QLineEdit()
-        self.in_birim.setPlaceholderText("mg/f.tab, %, kP, mm, dakika …")
+        self.in_birim.setPlaceholderText("mg/f.tab, %, kP, mm …")
 
         self.lbl_hedef = QLabel("Hedef:"); izgara.addWidget(self.lbl_hedef, s, 0); izgara.addWidget(self.in_hedef, s, 1); s += 1
         self.lbl_tol = QLabel("Tolerans:"); izgara.addWidget(self.lbl_tol, s, 0); izgara.addWidget(self.in_tol, s, 1); s += 1
-        self.lbl_alt = QLabel("Alt Limit:"); izgara.addWidget(self.lbl_alt, s, 0); izgara.addWidget(self.in_alt, s, 1); s += 1
-        self.lbl_ust = QLabel("Üst Limit:"); izgara.addWidget(self.lbl_ust, s, 0); izgara.addWidget(self.in_ust, s, 1); s += 1
+        self.lbl_alt = QLabel("Alt Limit (veri üretimi):"); izgara.addWidget(self.lbl_alt, s, 0); izgara.addWidget(self.in_alt, s, 1); s += 1
+        self.lbl_ust = QLabel("Üst Limit (veri üretimi):"); izgara.addWidget(self.lbl_ust, s, 0); izgara.addWidget(self.in_ust, s, 1); s += 1
         self.lbl_min = QLabel("Minimum:"); izgara.addWidget(self.lbl_min, s, 0); izgara.addWidget(self.in_min, s, 1); s += 1
         self.lbl_maks = QLabel("Maksimum:"); izgara.addWidget(self.lbl_maks, s, 0); izgara.addWidget(self.in_maks, s, 1); s += 1
-        self.lbl_metin = QLabel("Sabit Sonuç:"); izgara.addWidget(self.lbl_metin, s, 0); izgara.addWidget(self.in_metin, s, 1); s += 1
+        self.lbl_metin = QLabel("Sabit Sonuç metni:"); izgara.addWidget(self.lbl_metin, s, 0); izgara.addWidget(self.in_metin, s, 1); s += 1
         self.lbl_birim = QLabel("Birim:"); izgara.addWidget(self.lbl_birim, s, 0); izgara.addWidget(self.in_birim, s, 1); s += 1
 
         d.addLayout(izgara)
+        d.addWidget(ipucu_etiketi(
+            "‘Sabit Sonuç metni’ spesifikasyon hücresinde aynen görünür. "
+            "Alt/Üst Limit ise PVR sonuç değerlerinin bu aralıkta üretilmesini sağlar."
+        ))
 
-        # İşaretler (1.6)
+        # İşaretler
         isaret = QHBoxLayout()
         self.chk_ipk = QCheckBox("IPK testi (Tablo 7)")
         self.chk_yildiz = QCheckBox("* Validasyon serilerinde")
@@ -214,6 +236,20 @@ class SpekModulu(QWidget):
         b_test_ekle.setObjectName("birincil")
         b_test_ekle.clicked.connect(self._test_ekle)
         d.addWidget(b_test_ekle)
+
+        # Hazır kalıplar + kopyalama
+        kalip = QHBoxLayout()
+        b_mikro = QPushButton("+ Mikrobiyolojik Kontrol")
+        b_mikro.clicked.connect(self._mikrobiyolojik_ekle)
+        b_agirlik = QPushButton("+ Ağırlık Tekdüzeliği")
+        b_agirlik.clicked.connect(self._agirlik_ekle)
+        kalip.addWidget(b_mikro)
+        kalip.addWidget(b_agirlik)
+        d.addLayout(kalip)
+
+        b_kopyala = QPushButton("Seçili testi başka operasyona kopyala")
+        b_kopyala.clicked.connect(self._bolume_kopyala)
+        d.addWidget(b_kopyala)
         d.addStretch(1)
 
         self._limit_turu_degisti()  # ilk durumda alanları ayarla
@@ -248,6 +284,10 @@ class SpekModulu(QWidget):
         idx = self.cmb_form.findData(self.kart.urun_formu)
         if idx >= 0:
             self.cmb_form.setCurrentIndex(idx)
+        # Tablo 8/9 ayarları
+        self.chk_t89.blockSignals(True); self.chk_t89.setChecked(self.kart.tablo89_ekle); self.chk_t89.blockSignals(False)
+        self.in_t8_tol.blockSignals(True); self.in_t8_tol.setText(self.kart.serbest_birakma_tolerans); self.in_t8_tol.blockSignals(False)
+        self.in_t9_tol.blockSignals(True); self.in_t9_tol.setText(self.kart.raf_omru_tolerans); self.in_t9_tol.blockSignals(False)
         self._operasyonlari_yenile()
         self._em_listesini_yenile()
         self._em_combo_yenile()
@@ -379,11 +419,11 @@ class SpekModulu(QWidget):
         goster = {
             "hedef": tur is LimitTuru.ARALIK,
             "tol": tur is LimitTuru.ARALIK,
-            "alt": tur is LimitTuru.ARALIK,
-            "ust": tur is LimitTuru.ARALIK,
+            "alt": tur in (LimitTuru.ARALIK, LimitTuru.METIN),
+            "ust": tur in (LimitTuru.ARALIK, LimitTuru.METIN),
             "min": tur is LimitTuru.MINIMUM,
             "maks": tur is LimitTuru.MAKSIMUM,
-            "metin": tur is LimitTuru.METIN,
+            "metin": True,   # Sabit sonuç metni HER ZAMAN görünür (spek hücresinde gösterilir)
             "birim": tur in (LimitTuru.ARALIK, LimitTuru.MINIMUM, LimitTuru.MAKSIMUM),
         }
         for ad, vis in goster.items():
@@ -410,23 +450,27 @@ class SpekModulu(QWidget):
 
         tur = _LIMIT_SECENEKLERI[self.cmb_limit.currentIndex()][1]
         spek = Spesifikasyon(limit_turu=tur, birim=self.in_birim.text().strip())
+        # Alt/Üst limit her tipte veri üretimi için saklanabilir
+        spek.alt_metin = self.in_alt.text().strip()
+        spek.ust_metin = self.in_ust.text().strip()
+        spek.alt_limit = self._sayi(spek.alt_metin)
+        spek.ust_limit = self._sayi(spek.ust_metin)
         if tur is LimitTuru.ARALIK:
-            # Ham metni BİREBİR sakla (ondalık korunur); float'ı veri üretimi için türet
             spek.hedef_metin = self.in_hedef.text().strip()
-            spek.alt_metin = self.in_alt.text().strip()
-            spek.ust_metin = self.in_ust.text().strip()
             spek.tolerans = self.in_tol.text().strip()
             spek.hedef_deger = self._sayi(spek.hedef_metin)
-            spek.alt_limit = self._sayi(spek.alt_metin)
-            spek.ust_limit = self._sayi(spek.ust_metin)
         elif tur is LimitTuru.MINIMUM:
             spek.minimum_metin = self.in_min.text().strip()
             spek.minimum_deger = self._sayi(spek.minimum_metin)
         elif tur is LimitTuru.MAKSIMUM:
             spek.maksimum_metin = self.in_maks.text().strip()
             spek.maksimum_deger = self._sayi(spek.maksimum_metin)
-        elif tur is LimitTuru.METIN:
-            spek.sabit_sonuc = self.in_metin.text().strip()
+
+        # Sabit sonuç metni doluysa spesifikasyon hücresinde AYNEN gösterilir.
+        sabit = self.in_metin.text().strip()
+        if sabit:
+            spek.spesifikasyon_metni = sabit
+            spek.sabit_sonuc = sabit
 
         test = Test(
             ad=ad,
@@ -447,6 +491,71 @@ class SpekModulu(QWidget):
             le.clear()
         self.chk_ipk.setChecked(False)
         self.chk_yildiz.setChecked(False)
+
+    # ---- hazır kalıplar ----
+    def _mikrobiyolojik_ekle(self) -> None:
+        """Mikrobiyolojik Kontrol: sabit 3 alt satır, sonuç hep 'Uygun'."""
+        op = self.cmb_op.currentText()
+        test = Test(
+            ad="Mikrobiyolojik Kontrol",
+            operasyon=op,
+            operasyon_no=self.sp_op_no.value(),
+            tablo_tipi=TabloTipi.MATRIS,
+            mikrobiyolojik=True,
+            ipk=self.chk_ipk.isChecked(),
+            yildizli=self.chk_yildiz.isChecked(),
+            spesifikasyon=Spesifikasyon(limit_turu=LimitTuru.METIN, sabit_sonuc="Uygun"),
+            alt_satirlar=[
+                ("-Toplam Aerobik Mikroorganizma Sayısı", "≤10³ cfu/g"),
+                ("-Küf ve Maya Sayısı", "≤10² cfu/g"),
+                ("-E. coli", "0 cfu/g"),
+            ],
+        )
+        self.kart.testler.append(test)
+        self._tabloyu_yenile()
+
+    def _agirlik_ekle(self) -> None:
+        """Ağırlık Tekdüzeliği: başlık + 1 açıklama satırı (limit kullanıcıdan)."""
+        op = self.cmb_op.currentText()
+        alt = self.in_alt.text().strip() or "270.75"
+        ust = self.in_ust.text().strip() or "299.25"
+        test = Test(
+            ad="Ağırlık Tekdüzeliği",
+            operasyon=op,
+            operasyon_no=self.sp_op_no.value(),
+            tablo_tipi=TabloTipi.AGIRLIK_TEKDUZELIGI,
+            ipk=self.chk_ipk.isChecked(),
+            yildizli=self.chk_yildiz.isChecked(),
+            spesifikasyon=Spesifikasyon(limit_turu=LimitTuru.ARALIK,
+                                        alt_metin=alt, ust_metin=ust,
+                                        alt_limit=self._sayi(alt), ust_limit=self._sayi(ust),
+                                        birim="mg"),
+            aciklama_etiketi="—20 tablette tek tek tabletlerden maksimum 2 tanesi bu limitten sapabilir.",
+            aciklama_spek=f"≤ {alt} veya ≥ {ust} mg",
+        )
+        self.kart.testler.append(test)
+        self._tabloyu_yenile()
+
+    def _bolume_kopyala(self) -> None:
+        """Seçili testi başka bir operasyona kopyalar (yıldız HARİÇ)."""
+        r = self.tablo.currentRow()
+        if not (0 <= r < len(self.kart.testler)):
+            QMessageBox.information(self, "Kopyala", "Önce tablodan bir test seçin.")
+            return
+        kaynak = self.kart.testler[r]
+        operasyonlar = [self.cmb_op.itemText(i) for i in range(self.cmb_op.count())]
+        hedef, ok = QInputDialog.getItem(self, "Başka Operasyona Kopyala",
+                                         "Hedef operasyon:", operasyonlar, 0, False)
+        if not ok:
+            return
+        import copy as _copy
+        yeni = _copy.deepcopy(kaynak)
+        yeni.operasyon = hedef
+        yeni.operasyon_no = self._OP_NO.get(hedef, kaynak.operasyon_no)
+        yeni.yildizli = False  # yıldız kopyalanmaz (kullanıcı kararı)
+        yeni.sonuc_verisi = {}
+        self.kart.testler.append(yeni)
+        self._tabloyu_yenile()
 
     def _test_sil_sor(self, row: int, _col: int) -> None:
         if not (0 <= row < len(self.kart.testler)):

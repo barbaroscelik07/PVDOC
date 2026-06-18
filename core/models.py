@@ -181,6 +181,8 @@ class Test:
     #    "≤ 270.75 veya ≥ 299.25 mg")
     aciklama_etiketi: str = ""
     aciklama_spek: str = ""
+    aciklama2_etiketi: str = ""
+    aciklama2_spek: str = ""
 
     # Bu test özel bir kalıp mı (mikrobiyolojik)? Sonuç hep "Uygun".
     mikrobiyolojik: bool = False
@@ -199,6 +201,10 @@ class Impurite:
     ad: str                           # "imp. a", "Sülfoksit imp.", "Toplam imp."
     limit_metni: str = ""             # "Maksimum %1.0"
     maksimum_deger: Optional[float] = None
+    operasyon: str = ""               # impuritenin ölçüldüğü operasyon (grup için)
+    operasyon_no: int = 0
+    yildizli: bool = False            # bu grup * (validasyon) mı
+    te: bool = False                  # sonuçta T.E. (tespit edilemedi) mi
 
 
 @dataclass

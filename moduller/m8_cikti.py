@@ -26,6 +26,27 @@ from moduller.widget_yardimcilari import (
 )
 
 
+def _dosya_adi_guvenli(metin: str) -> str:
+    """
+    Ürün adını dosya adı olarak güvenli hale getirir:
+    - Türkçe karakterleri sadeleştirir (ı→i, ş→s, ç→c, ...)
+    - Yol ayraçları (/ \\) ve geçersiz karakterleri (: * ? " < > |) '_' yapar
+    - Boşlukları '_' yapar, baştaki/sondaki '_' temizlenir
+    """
+    tr = str.maketrans({
+        "ı": "i", "İ": "I", "ş": "s", "Ş": "S", "ç": "c", "Ç": "C",
+        "ğ": "g", "Ğ": "G", "ü": "u", "Ü": "U", "ö": "o", "Ö": "O",
+    })
+    ad = (metin or "urun").translate(tr)
+    gecersiz = '/\\:*?"<>|'
+    for ch in gecersiz:
+        ad = ad.replace(ch, "_")
+    ad = "_".join(ad.split())  # boşlukları tek '_' yap
+    while "__" in ad:
+        ad = ad.replace("__", "_")
+    return ad.strip("_") or "urun"
+
+
 class UretimIscisi(QThread):
     """Word/PDF üretimini arka planda yapar (UI donmasın)."""
     bitti = pyqtSignal(list, str)   # (uretilen_yollar, hata_mesaji)
@@ -44,7 +65,7 @@ class UretimIscisi(QThread):
     def run(self) -> None:
         uretilen: list[str] = []
         try:
-            urun = (self.proje.dokuman.urun_adi or "urun").replace(" ", "_")
+            urun = _dosya_adi_guvenli(self.proje.dokuman.urun_adi or "urun")
 
             if self.pvr and self.veri_uret:
                 self.ilerleme.emit("Sonuç verisi üretiliyor…")

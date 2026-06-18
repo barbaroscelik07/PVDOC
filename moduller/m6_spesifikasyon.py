@@ -109,8 +109,8 @@ class SpekModulu(QWidget):
         # Orta alan: solda etkin madde/impurite, sağda test ekleme formu
         orta = QHBoxLayout()
         orta.setSpacing(16)
-        orta.addLayout(self._etkin_madde_bolumu(), 1)
-        orta.addLayout(self._test_ekleme_bolumu(), 1)
+        orta.addLayout(self._etkin_madde_bolumu(), 2)
+        orta.addLayout(self._test_ekleme_bolumu(), 3)
         kok.addLayout(orta)
 
         kok.addWidget(ayirici())
@@ -283,14 +283,58 @@ class SpekModulu(QWidget):
         return t
 
     def _tasima_butonlari(self) -> QHBoxLayout:
-        """Test sırasını elle değiştirme + operasyona göre otomatik sıralama."""
+        """Test sırasını elle değiştirme + operasyona göre otomatik sıralama + düzenle/sil."""
         h = QHBoxLayout()
         b_yukari = QPushButton("▲ Yukarı"); b_yukari.clicked.connect(lambda: self._tasi(-1))
         b_asagi = QPushButton("▼ Aşağı"); b_asagi.clicked.connect(lambda: self._tasi(1))
         b_sirala = QPushButton("Operasyona Göre Sırala")
         b_sirala.clicked.connect(self._operasyona_gore_sirala)
-        h.addWidget(b_yukari); h.addWidget(b_asagi); h.addWidget(b_sirala); h.addStretch(1)
+        b_duzenle = QPushButton("Seçiliyi Düzenle")
+        b_duzenle.clicked.connect(self._secili_duzenle)
+        b_sil = QPushButton("Seçiliyi Sil")
+        b_sil.clicked.connect(self._secili_sil)
+        h.addWidget(b_yukari); h.addWidget(b_asagi); h.addWidget(b_sirala)
+        h.addWidget(b_duzenle); h.addWidget(b_sil); h.addStretch(1)
         return h
+
+    def _secili_sil(self) -> None:
+        r = self.tablo.currentRow()
+        if 0 <= r < len(self.kart.testler):
+            c = QMessageBox.question(self, "Sil", f"'{self.kart.testler[r].ad}' silinsin mi?")
+            if c == QMessageBox.StandardButton.Yes:
+                del self.kart.testler[r]
+                self._tabloyu_yenile()
+
+    def _secili_duzenle(self) -> None:
+        """Seçili testin değerlerini forma yükler; tekrar 'Testi Ekle' ile güncellenir."""
+        r = self.tablo.currentRow()
+        if not (0 <= r < len(self.kart.testler)):
+            QMessageBox.information(self, "Düzenle", "Önce tablodan bir test seçin.")
+            return
+        t = self.kart.testler[r]
+        sp = t.spesifikasyon
+        self.in_ad.setText(t.ad.rstrip("*"))
+        self.cmb_op.setCurrentText(t.operasyon)
+        self.sp_op_no.setValue(t.operasyon_no or 0)
+        # limit türü
+        for i, (_, tur) in enumerate(_LIMIT_SECENEKLERI):
+            if tur is sp.limit_turu:
+                self.cmb_limit.setCurrentIndex(i); break
+        self.in_hedef.setText(sp.hedef_metin)
+        self.in_tol.setText(sp.tolerans)
+        self.in_alt.setText(sp.alt_metin)
+        self.in_ust.setText(sp.ust_metin)
+        self.in_min.setText(sp.minimum_metin)
+        self.in_maks.setText(sp.maksimum_metin)
+        self.in_metin.setText(sp.spesifikasyon_metni or sp.sabit_sonuc)
+        self.in_birim.setText(sp.birim)
+        self.chk_ipk.setChecked(t.ipk)
+        self.chk_yildiz.setChecked(t.yildizli)
+        # eskisini sil ki 'Testi Ekle' güncellenmiş halini eklesin
+        del self.kart.testler[r]
+        self._tabloyu_yenile()
+        QMessageBox.information(self, "Düzenle",
+                               "Test bilgileri forma yüklendi. Değiştirip 'Testi Ekle' ile tekrar ekleyin.")
 
     def _tasi(self, yon: int) -> None:
         r = self.tablo.currentRow()
@@ -417,28 +461,20 @@ class SpekModulu(QWidget):
         if not v["ad"]:
             return
 
-        # 1) impurite olarak etkin maddeye ekle
-        em.impuriteler.append(Impurite(ad=v["ad"], limit_metni=v["limit"],
-                                       maksimum_deger=self._sayi(v["maks"])))
-        self._imp_listesini_yenile()
-
-        # 2) "İlgili Bileşikler" testi olarak test tablosuna ekle (kullanıcı kararı)
-        spek = Spesifikasyon(limit_turu=LimitTuru.MAKSIMUM,
-                             maksimum_metin=v["maks"], maksimum_deger=self._sayi(v["maks"]),
-                             birim="%")
-        if v["limit"]:
-            spek.spesifikasyon_metni = v["limit"]
-        test = Test(
-            ad=f"{em.ad} {v['ad']}",
+        # İmpurite, etkin maddeye eklenir. İlgili Bileşikler grubu çıktıda
+        # (Tablo 6/8/9) bu listeden GRUPLU üretilir — ayrı test OLUŞTURULMAZ.
+        maks = (v["maks"] or "").strip()
+        te = maks.upper().replace(" ", "") in ("T.E.", "T.E", "TE")
+        em.impuriteler.append(Impurite(
+            ad=v["ad"],
+            limit_metni=v["limit"] or (f"Maksimum %{maks}" if maks and not te else ("Maksimum T.E." if te else "")),
+            maksimum_deger=self._sayi(maks),
             operasyon=v["operasyon"],
             operasyon_no=self._OP_NO.get(v["operasyon"], 0),
-            spesifikasyon=spek,
-            tablo_tipi=TabloTipi.IKI_NUMUNE,   # İlgili Bileşikler 2-numune yapısı
-            etkin_madde_index=self.liste_em.currentRow(),
             yildizli=v["yildiz"],
-        )
-        self.kart.testler.append(test)
-        self._tabloyu_yenile()
+            te=te,
+        ))
+        self._imp_listesini_yenile()
 
     def _imp_sil(self) -> None:
         em = self._secili_em()
@@ -549,28 +585,36 @@ class SpekModulu(QWidget):
         self._tabloyu_yenile()
 
     def _agirlik_ekle(self) -> None:
-        """Ağırlık Tekdüzeliği: başlık + 1 açıklama satırı (limit kullanıcıdan)."""
-        op = self.cmb_op.currentText()
-        alt = self.in_alt.text().strip()
-        ust = self.in_ust.text().strip()
-        if not alt or not ust:
+        """
+        Ağırlık Tekdüzeliği (resimdeki yapı):
+          satır 1: 'Ağırlık Tekdüzeliği' — sağı BOŞ
+          satır 2: '—20 tablette ... maksimum 2 tanesi ... sapabilir.' — sağında 1. limit
+          satır 3: '—Hiçbir tablet bu limitten sapmamalıdır' — sağında 2. limit
+        Sonuç verisi için ana alt/üst limit (Ortalama Ağırlık ile eşleşir).
+        """
+        dlg = AgirlikDialog(self, operasyon=self.cmb_op.currentText())
+        if not dlg.exec():
+            return
+        v = dlg.degerler()
+        if not (v["alt"] and v["ust"]):
             QMessageBox.information(self, "Ağırlık Tekdüzeliği",
-                                    "Lütfen önce Alt Limit ve Üst Limit alanlarını doldurun "
-                                    "(örn. 270.75 ve 299.25).")
+                                    "Alt ve üst limit (örn. 270.75 / 299.25) zorunludur.")
             return
         test = Test(
             ad="Ağırlık Tekdüzeliği",
-            operasyon=op,
+            operasyon=self.cmb_op.currentText(),
             operasyon_no=self.sp_op_no.value(),
             tablo_tipi=TabloTipi.AGIRLIK_TEKDUZELIGI,
             ipk=self.chk_ipk.isChecked(),
             yildizli=self.chk_yildiz.isChecked(),
             spesifikasyon=Spesifikasyon(limit_turu=LimitTuru.ARALIK,
-                                        alt_metin=alt, ust_metin=ust,
-                                        alt_limit=self._sayi(alt), ust_limit=self._sayi(ust),
+                                        alt_metin=v["alt"], ust_metin=v["ust"],
+                                        alt_limit=self._sayi(v["alt"]), ust_limit=self._sayi(v["ust"]),
                                         birim="mg"),
             aciklama_etiketi="—20 tablette tek tek tabletlerden maksimum 2 tanesi bu limitten sapabilir.",
-            aciklama_spek=f"≤ {alt} veya ≥ {ust} mg",
+            aciklama_spek=v["limit1"],
+            aciklama2_etiketi="—Hiçbir tablet bu limitten sapmamalıdır",
+            aciklama2_spek=v["limit2"],
         )
         self.kart.testler.append(test)
         self._tabloyu_yenile()
@@ -591,7 +635,12 @@ class SpekModulu(QWidget):
         yeni = _copy.deepcopy(kaynak)
         yeni.operasyon = hedef
         yeni.operasyon_no = self._OP_NO.get(hedef, kaynak.operasyon_no)
-        yeni.yildizli = False  # yıldız kopyalanmaz (kullanıcı kararı)
+        # Yıldız (* validasyon serilerinde) durumunu her kopyada sor
+        c = QMessageBox.question(
+            self, "Validasyon (*)",
+            f"'{hedef}' bölümünde bu test '*' (validasyon serilerinde) olarak işaretlensin mi?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        yeni.yildizli = (c == QMessageBox.StandardButton.Yes)
         yeni.sonuc_verisi = {}
         self.kart.testler.append(yeni)
         self._operasyona_gore_sirala()  # kopya sonrası otomatik düzenle
@@ -706,4 +755,45 @@ class ImpuriteDialog(QDialog):
             "maks": self.in_maks.text().strip(),
             "operasyon": self.cmb_op.currentText(),
             "yildiz": self.chk_yildiz.isChecked(),
+        }
+
+
+class AgirlikDialog(QDialog):
+    """Ağırlık Tekdüzeliği: 2 limit çifti + sonuç üretimi için alt/üst limit."""
+
+    def __init__(self, parent, operasyon: str):
+        super().__init__(parent)
+        self.setWindowTitle("Ağırlık Tekdüzeliği Ekle")
+        self.setStyleSheet(MODUL_STIL)
+        self.setMinimumWidth(460)
+
+        izg = QGridLayout(self)
+        s = 0
+        izg.addWidget(QLabel("Sonuç üretimi için (Ortalama Ağırlık ile eşleşir):"), s, 0, 1, 2); s += 1
+        izg.addWidget(QLabel("Alt Limit:"), s, 0)
+        self.in_alt = QLineEdit(); self.in_alt.setPlaceholderText("örn. 270.75")
+        izg.addWidget(self.in_alt, s, 1); s += 1
+        izg.addWidget(QLabel("Üst Limit:"), s, 0)
+        self.in_ust = QLineEdit(); self.in_ust.setPlaceholderText("örn. 299.25")
+        izg.addWidget(self.in_ust, s, 1); s += 1
+
+        izg.addWidget(QLabel("— maksimum 2 tanesi sapabilir → sağ değer:"), s, 0)
+        self.in_l1 = QLineEdit(); self.in_l1.setPlaceholderText("örn. ≤ 270.75 veya ≥ 299.25 mg")
+        izg.addWidget(self.in_l1, s, 1); s += 1
+        izg.addWidget(QLabel("— hiçbir tablet sapmamalıdır → sağ değer:"), s, 0)
+        self.in_l2 = QLineEdit(); self.in_l2.setPlaceholderText("örn. ≤ 256.50 veya ≥ 313.50 mg")
+        izg.addWidget(self.in_l2, s, 1); s += 1
+
+        btn = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn.accepted.connect(self.accept)
+        btn.rejected.connect(self.reject)
+        izg.addWidget(btn, s, 0, 1, 2)
+
+    def degerler(self) -> dict:
+        return {
+            "alt": self.in_alt.text().strip(),
+            "ust": self.in_ust.text().strip(),
+            "limit1": self.in_l1.text().strip(),
+            "limit2": self.in_l2.text().strip(),
         }

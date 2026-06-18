@@ -74,10 +74,14 @@ def satir_klonla(tablo: Table, kaynak_index: int = -1) -> _Row:
 
 def hucre_yaz(cell, metin: str, bold: bool | None = None) -> None:
     """
-    Hücreye metin yazar; ilk run'ın biçimini (font) korur, kalan run'ları siler.
+    Hücreye metin yazar; ilk run'ın biçimini (font) korur, kalan run'ları VE
+    fazla paragrafları siler (eski şablon içeriği kalmaz).
     bold None ise mevcut bold durumu korunur.
     """
     p = cell.paragraphs[0]
+    # İlk paragraf dışındaki tüm paragrafları kaldır (eski içerik temizliği)
+    for ekstra in cell.paragraphs[1:]:
+        ekstra._p.getparent().remove(ekstra._p)
     if p.runs:
         p.runs[0].text = str(metin)
         if bold is not None:

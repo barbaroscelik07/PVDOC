@@ -15,8 +15,9 @@ from __future__ import annotations
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QSpinBox, QPlainTextEdit, QPushButton, QListWidget, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QTableWidgetItem, QHeaderView, QAbstractItemView, QSplitter, QScrollArea,
 )
+from PyQt6.QtCore import Qt
 
 from core.models import ProjeVerisi, Asama, ParametreSatiri
 from moduller.widget_yardimcilari import (
@@ -40,8 +41,8 @@ class ProsesModulu(QWidget):
         kok.setSpacing(12)
         kok.addWidget(baslik_etiketi("Üretim Yöntemi (Proses Tanımı)"))
 
-        govde = QHBoxLayout()
-        govde.setSpacing(16)
+        # Splitter: dar ekranda sol/sağ panel oranı korunur, paneller ezilmez
+        bolucu = QSplitter(Qt.Orientation.Horizontal)
 
         # --- sol: aşama listesi ---
         sol = QVBoxLayout()
@@ -54,8 +55,9 @@ class ProsesModulu(QWidget):
         b_sil = QPushButton("− Sil"); b_sil.setObjectName("tehlike"); b_sil.clicked.connect(self._asama_sil)
         sb.addWidget(b_ekle); sb.addWidget(b_sil)
         sol.addLayout(sb)
-        sol_w = QWidget(); sol_w.setLayout(sol); sol_w.setFixedWidth(260)
-        govde.addWidget(sol_w)
+        sol_w = QWidget(); sol_w.setLayout(sol)
+        sol_w.setMinimumWidth(220)
+        bolucu.addWidget(sol_w)
 
         # --- sağ: detay editörü ---
         sag = QVBoxLayout()
@@ -91,7 +93,7 @@ class ProsesModulu(QWidget):
         b_ps = QPushButton("− Sil"); b_ps.setObjectName("tehlike"); b_ps.clicked.connect(self._param_sil)
         pb.addWidget(b_pe); pb.addWidget(b_ps)
         sag.addLayout(pb)
-        sag.addWidget(ipucu_etiketi("örn. ‘Elek açıklığı | 0,8 mm’, ‘Karıştırma süresi | 10 dk’"))
+        sag.addWidget(ipucu_etiketi("örn. ‘Elek açıklığı | 0,8 mm’, ‘Karıştırma süresi | 10 dk’ — ° için: AltGr+, veya kopyala-yapıştır"))
 
         self.t_param = QTableWidget(0, 2)
         self.t_param.setHorizontalHeaderLabels(["Etiket", "Değer"])
@@ -102,8 +104,17 @@ class ProsesModulu(QWidget):
         sag.addWidget(self.t_param, 1)
 
         sag_w = QWidget(); sag_w.setLayout(sag)
-        govde.addWidget(sag_w, 1)
-        kok.addLayout(govde, 1)
+        sag_w.setMinimumWidth(300)
+        bolucu.addWidget(sag_w)
+        bolucu.setStretchFactor(1, 1)
+        bolucu.setSizes([260, 600])
+
+        # Tüm gövdeyi dikey kaydırılabilir yap (dar/yarım ekranda butonlar erişilebilir kalır)
+        kaydir = QScrollArea()
+        kaydir.setWidgetResizable(True)
+        kaydir.setWidget(bolucu)
+        kaydir.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        kok.addWidget(kaydir, 1)
 
         self._detay_aktif(False)
 

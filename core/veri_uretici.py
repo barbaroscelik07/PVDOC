@@ -96,12 +96,16 @@ def rsd_yuzde(degerler: list[float]) -> float:
 def _uretim_araligi(spek: Spesifikasyon) -> tuple[float, float]:
     """
     Spesifikasyondan, içine güvenle değer üretilebilecek (alt, üst) aralık.
-    Öncelik: açıkça girilen alt_limit/ust_limit; yoksa spesifikasyon metninden
-    otomatik çıkarılan sayılar.
+
+    Kullanıcı limit mantığı:
+      - Hem alt hem üst → ikisi arasında üret.
+      - Sadece üst (alt yok) → maksimum gibi: üstün altında üret.
+      - Sadece alt (üst yok) → minimum gibi: altın üstünde üret.
+    Limitler boşsa spesifikasyon metninden otomatik çıkarılır.
     """
     alt_l = spek.alt_limit
     ust_l = spek.ust_limit
-    # Limitler boşsa metinden (spesifikasyon_metni / sabit_sonuc) çıkarmayı dene
+    # Limitler boşsa metinden çıkarmayı dene
     if alt_l is None or ust_l is None:
         kaynak = spek.spesifikasyon_metni or spek.sabit_sonuc or ""
         m_alt, m_ust = _aralik_metinden(kaynak)
@@ -110,10 +114,18 @@ def _uretim_araligi(spek: Spesifikasyon) -> tuple[float, float]:
         if ust_l is None:
             ust_l = m_ust
 
+    # Hem alt hem üst
     if alt_l is not None and ust_l is not None:
         genislik = ust_l - alt_l
         pay = genislik * 0.20
         return alt_l + pay, ust_l - pay
+    # Sadece üst → maksimum mantığı (üstün altında sağlıklı bant)
+    if ust_l is not None:
+        return ust_l * 0.05, ust_l * 0.6
+    # Sadece alt → minimum mantığı (altın üstünde bant)
+    if alt_l is not None:
+        return alt_l * 1.05 + 0.01, alt_l * 1.05 + max(alt_l * 0.5, 1.0)
+    # Eski limit türü alanları (geri uyumluluk)
     if spek.limit_turu is LimitTuru.MINIMUM and spek.minimum_deger is not None:
         taban = spek.minimum_deger
         return taban * 1.05 + 0.01, taban * 1.05 + max(taban * 0.5, 1.0)
@@ -122,7 +134,6 @@ def _uretim_araligi(spek: Spesifikasyon) -> tuple[float, float]:
         return tavan * 0.05, tavan * 0.6
     if spek.hedef_deger is not None:
         return spek.hedef_deger * 0.98, spek.hedef_deger * 1.02
-    # Son çare: minimum tek sayı varsa onun etrafı
     tek = _metinden_sayilar(spek.spesifikasyon_metni or spek.sabit_sonuc or "")
     if tek:
         return tek[0] * 1.02, tek[0] * 1.10
@@ -166,7 +177,15 @@ def _tek_sonuc(spek: Spesifikasyon, test_adi: str = "") -> dict:
 
 
 def _iki_numune(spek: Spesifikasyon) -> dict:
-    """Numune-1, Numune-2 + Sonuç(ortalama), her seri için."""
+    """
+    Numune-1, Numune-2 + Sonuç(ortalama), her seri için.
+    Maksimum değeri 'T.E.' (tespit edilemedi) ise tüm sonuçlar 'T.E.' olur.
+    """
+    te = (spek.maksimum_metin or "").strip().upper().replace(" ", "")
+    if te in ("T.E.", "T.E", "TE", "TESPİTEDİLEMEDİ", "TESPITEDILEMEDI"):
+        return {"te": True, "seriler": [
+            {"numune_1": "T.E.", "numune_2": "T.E.", "sonuc": "T.E."}
+            for _ in range(SERI_SAYISI)]}
     alt, ust = _uretim_araligi(spek)
     seriler = []
     for _ in range(SERI_SAYISI):
@@ -181,20 +200,24 @@ def _iki_numune(spek: Spesifikasyon) -> dict:
 
 def _on_numune(spek: Spesifikasyon) -> dict:
     """
-    1..10 numune + Ortalama, her seri için.
-    Karışım Tekdüzeliği tipik olarak ortalama ~%100 civarında çıkar.
-    Aralık spesifikasyondan (alt/üst limit veya metinden) belirlenir.
+    1..10 numune + Ortalama, her seri için (Karışım Tekdüzeliği).
+    Kullanıcı kuralı: her zaman değerler %97–%105 arasında, seri ortalaması
+    %100–%102 arasında olmalı (spesifikasyon %85–115 olsa bile gerçekçi sağlıklı veri).
     """
-    alt, ust = _uretim_araligi(spek)
-    # Karışım gibi geniş bantlarda (örn 85-115) gerçekçi dar üretim (~%100)
-    if ust - alt > 20:
-        merkez = (alt + ust) / 2
-        alt2 = max(alt, merkez - 5)
-        ust2 = min(ust, merkez + 5)
-        alt, ust = alt2, ust2
+    DEGER_ALT, DEGER_UST = 97.0, 105.0      # tek tek ölçümler bu bantta
+    ORT_ALT, ORT_UST = 100.0, 102.0          # seri ortalaması bu bantta
     seriler = []
     for _ in range(SERI_SAYISI):
-        olcumler = [round(random.uniform(alt, ust), spek.ondalik) for _ in range(10)]
+        hedef_ort = random.uniform(ORT_ALT, ORT_UST)
+        # hedef ortalamayı tutturacak 10 değer üret
+        olcumler = []
+        for _ in range(10):
+            v = random.uniform(DEGER_ALT, DEGER_UST)
+            olcumler.append(v)
+        # ölçümleri hedef ortalamaya kaydır
+        mevcut = sum(olcumler) / len(olcumler)
+        fark = hedef_ort - mevcut
+        olcumler = [min(DEGER_UST, max(DEGER_ALT, round(v + fark, spek.ondalik))) for v in olcumler]
         seriler.append({
             "olcumler": olcumler,
             "ortalama": round(ortalama(olcumler), spek.ondalik),

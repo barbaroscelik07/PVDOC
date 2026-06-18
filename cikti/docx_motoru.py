@@ -219,43 +219,96 @@ def _doldur_numune(doc, proje: ProjeVerisi) -> None:
 
 
 def _doldur_spek(doc, proje: ProjeVerisi) -> None:
-    """Tablo 6 — spesifikasyon. Yıldız test adının SONUNA; alt satırlar ayrı satır."""
+    """Tablo 6 — spesifikasyon. Yıldız test adının SONUNA; alt satırlar ayrı satır.
+    İlgili Bileşikler etkin madde başına GRUPLU eklenir (operasyon hücresi dikey birleşik)."""
     t = _tablo_basliga_gore(doc, 6)  # Tablo 6
     kart = proje.spek_karti
-    if t is None or not kart.testler:
+    if t is None:
         return
 
-    # Her testin kaç satır kaplayacağını hesapla (ana + alt satırlar + açıklama)
-    satir_planı = []  # (test, alt_satir_listesi)  -> toplam satır
-    toplam = 0
+    # 1) Normal testlerin satır planı
+    satir_planı = []  # (tip, veri)
     for test in kart.testler:
         ekstra = list(test.alt_satirlar)
         if test.aciklama_etiketi:
             ekstra = ekstra + [(test.aciklama_etiketi, test.aciklama_spek)]
-        satir_planı.append((test, ekstra))
+        if test.aciklama2_etiketi:
+            ekstra = ekstra + [(test.aciklama2_etiketi, test.aciklama2_spek)]
+        satir_planı.append(("test", (test, ekstra)))
+
+    # 2) İlgili Bileşikler grupları (etkin madde başına)
+    #    Her grup: başlık satırı + impurite satırları; operasyon dikey birleşik.
+    ilgili_gruplar = []
+    for em in kart.etkin_maddeler:
+        if not em.impuriteler:
+            continue
+        ilk = em.impuriteler[0]
+        yildiz = "*" if any(i.yildizli for i in em.impuriteler) else ""
+        ilgili_gruplar.append({
+            "baslik": f"{em.ad} İlgili Bileşikler{yildiz}",
+            "operasyon": ilk.operasyon,
+            "operasyon_no": ilk.operasyon_no,
+            "impuriteler": em.impuriteler,
+        })
+
+    # Toplam satır sayısı
+    toplam = 0
+    for tip, veri in satir_planı:
+        _, ekstra = veri
         toplam += 1 + len(ekstra)
+    for g in ilgili_gruplar:
+        toplam += 1 + len(g["impuriteler"])  # başlık + impurite satırları
+
+    if toplam == 0:
+        return
 
     idxler = _veri_satirlarini_ayarla(t, 1, toplam)
     it = iter(idxler)
-    for test, ekstra in satir_planı:
-        # ana satır
+
+    # Normal testler
+    for tip, veri in satir_planı:
+        test, ekstra = veri
         ri = next(it)
         cells = t.rows[ri].cells
         ad = test.ad + ("*" if test.yildizli else "")
         hucre_yaz(cells[0], str(test.operasyon_no or ""))
         hucre_yaz(cells[1], test.operasyon)
         hucre_yaz(cells[2], ad)
-        # mikrobiyolojik/ağırlık ana satırında spek hücresi boş (alt satırlarda dolu)
         ana_spek = "" if ekstra else test.spesifikasyon.metni_olustur()
         hucre_yaz(cells[3], ana_spek)
-        # alt satırlar
         for etiket, spek_metni in ekstra:
             ri2 = next(it)
             c2 = t.rows[ri2].cells
-            hucre_yaz(c2[0], "")
-            hucre_yaz(c2[1], "")
-            hucre_yaz(c2[2], etiket)
-            hucre_yaz(c2[3], spek_metni)
+            hucre_yaz(c2[0], ""); hucre_yaz(c2[1], "")
+            hucre_yaz(c2[2], etiket); hucre_yaz(c2[3], spek_metni)
+
+    # İlgili Bileşikler grupları
+    for g in ilgili_gruplar:
+        grup_satir_idx = []
+        # başlık satırı
+        rb = next(it)
+        grup_satir_idx.append(rb)
+        cb = t.rows[rb].cells
+        hucre_yaz(cb[0], str(g["operasyon_no"] or ""))
+        hucre_yaz(cb[1], g["operasyon"])
+        hucre_yaz(cb[2], g["baslik"])
+        hucre_yaz(cb[3], "")
+        # impurite satırları
+        for imp in g["impuriteler"]:
+            ri = next(it)
+            grup_satir_idx.append(ri)
+            c = t.rows[ri].cells
+            hucre_yaz(c[0], ""); hucre_yaz(c[1], "")
+            ad = imp.ad if imp.ad.startswith("—") or imp.ad.startswith("-") else f"—{imp.ad}"
+            hucre_yaz(c[2], ad)
+            hucre_yaz(c[3], imp.limit_metni or "")
+        # Operasyon No + Operasyon hücrelerini grup boyunca DİKEY birleştir
+        if len(grup_satir_idx) > 1:
+            ust, alt = grup_satir_idx[0], grup_satir_idx[-1]
+            t.rows[ust].cells[0].merge(t.rows[alt].cells[0])
+            t.rows[ust].cells[1].merge(t.rows[alt].cells[1])
+            hucre_yaz(t.rows[ust].cells[0], str(g["operasyon_no"] or ""))
+            hucre_yaz(t.rows[ust].cells[1], g["operasyon"])
 
 
 def _doldur_ipk(doc, proje: ProjeVerisi) -> None:
@@ -378,8 +431,8 @@ def _ekle_sonuc_iki(doc, proje, test, no):
         for c in range(SERI_SAYISI):
             v = seriler[c].get(key, "") if c < len(seriler) else ""
             _yaz_bos(t.rows[ri].cells[c+1], v, ri == 6)
-    # İmpurite ise T.E. notu
-    if "impurite" in test.ad.lower() or "ilgili bileşik" in test.ad.lower() or "imp." in test.ad.lower():
+    # T.E. (tespit edilemedi) verisi varsa tablonun ALTINA not ekle
+    if test.sonuc_verisi.get("te"):
         np = doc.add_paragraph()
         nr = np.add_run("T.E.: Tespit edilemedi.")
         nr.italic = True; nr.font.size = Pt(8)
@@ -630,35 +683,104 @@ def _miktar_spek_uret(hedef: float, tolerans: str, birim: str) -> str:
     return f"{hedef:g} {birim} {tolerans} ({alt:g} – {ust:g} {birim})".strip()
 
 
+def _test_bul(testler, *anahtarlar):
+    """Adında verilen anahtar kelimeleri içeren ilk testi bulur."""
+    for t in testler:
+        ad = t.ad.lower()
+        if all(a.lower() in ad for a in anahtarlar):
+            return t
+    return None
+
+
 def _doldur_tablo89(doc, proje: ProjeVerisi) -> None:
     """
-    Tablo 8 (Serbest Bırakma) ve Tablo 9 (Raf Ömrü): Tablo 6'daki bitmiş ürün
-    testlerini temel alır; Miktar Tayini toleransı her tabloda farklıdır.
+    Tablo 8 (Serbest Bırakma) ve Tablo 9 (Raf Ömrü).
+    SABİT şablon sırası: Görünüş → Ortalama Ağırlık → Ağırlık Tekdüzeliği (2 alt) →
+    Dağılma → her etkin madde (Teşhis / Miktar Tayini) → Dissolüsyon →
+    İlgili Bileşikler (etken başına gruplu) → Mikrobiyolojik Kontrol (3 alt).
+    İçerik Tablo 6'daki testlerden ve etkin maddelerden gelir.
+    Tablo 9 farkları: Ağırlık Tekdüzeliği* ve Teşhis* yıldızlı, Miktar Tayini
+    toleransı farklı, en altta '* Stabilite analizlerinde bakılmayacaktır' notu.
     """
     kart = proje.spek_karti
     if not kart.tablo89_ekle:
         return
-    bitmis = [t for t in kart.testler
-              if t.operasyon in ("Tablet Baskı", "Film Kaplama", "Dolum")
-              and not t.mikrobiyolojik]
-    for tablo_no, tol in [(8, kart.serbest_birakma_tolerans), (9, kart.raf_omru_tolerans)]:
+
+    testler = kart.testler
+    etkenler = kart.etkin_maddeler
+
+    def _satirlari_uret(raf_omru: bool, tol: str):
+        """(etiket, spek, girinti) üçlülerinden satır listesi üretir."""
+        yildiz = "*" if raf_omru else ""
+        satirlar = []  # (sol_metin, sag_metin)
+
+        # Görünüş
+        g = _test_bul(testler, "görünüş")
+        satirlar.append(("Görünüş", g.spesifikasyon.metni_olustur() if g else ""))
+        # Ortalama Ağırlık
+        oa = _test_bul(testler, "ortalama ağırlık")
+        satirlar.append(("Ortalama Ağırlık", oa.spesifikasyon.metni_olustur() if oa else ""))
+        # Ağırlık Tekdüzeliği (başlık + 2 alt)
+        at = _test_bul(testler, "ağırlık tekdüzeliği")
+        satirlar.append((f"Ağırlık Tekdüzeliği{yildiz}", ""))
+        if at:
+            satirlar.append((at.aciklama_etiketi or "—20 tablette tek tek tabletlerden maksimum 2 tanesi bu limitten sapabilir.", at.aciklama_spek))
+            if at.aciklama2_etiketi:
+                satirlar.append((at.aciklama2_etiketi, at.aciklama2_spek))
+        # Dağılma
+        dg = _test_bul(testler, "dağılma")
+        satirlar.append(("Dağılma", dg.spesifikasyon.metni_olustur() if dg else "Maksimum 30 dakika"))
+        # Her etkin madde: Teşhis + Miktar Tayini
+        for em in etkenler:
+            satirlar.append((em.ad, ""))  # ara başlık
+            tes = _test_bul(testler, em.ad, "teşhis")
+            satirlar.append((f"— Teşhis{yildiz}",
+                             tes.spesifikasyon.metni_olustur() if tes else "Standart ve numune alıkonma zamanı aynı olmalıdır."))
+            mt = _test_bul(testler, em.ad, "miktar tayini")
+            if mt:
+                mt_spek = mt.spesifikasyon.metni_olustur()
+                if raf_omru and mt.spesifikasyon.hedef_deger:
+                    mt_spek = _miktar_spek_uret(mt.spesifikasyon.hedef_deger, tol, mt.spesifikasyon.birim)
+                satirlar.append(("—Miktar Tayini", mt_spek))
+        # Dissolüsyon (her etken)
+        for em in etkenler:
+            ds = _test_bul(testler, em.ad, "dissolüsyon")
+            if ds:
+                satirlar.append((f"{em.ad} Dissolüsyon (Q)", ds.spesifikasyon.metni_olustur()))
+        # İlgili Bileşikler (etken başına gruplu)
+        if any(em.impuriteler for em in etkenler):
+            satirlar.append(("İlgili Bileşikler", ""))
+            for em in etkenler:
+                if not em.impuriteler:
+                    continue
+                satirlar.append((f"{em.ad}'e Ait", ""))  # italik ara başlık
+                for imp in em.impuriteler:
+                    ad = imp.ad if imp.ad.startswith("—") or imp.ad.startswith("-") else f"—{imp.ad}"
+                    satirlar.append((ad, imp.limit_metni or ""))
+        # Mikrobiyolojik Kontrol (3 alt)
+        mik = next((t for t in testler if t.mikrobiyolojik), None)
+        if mik:
+            satirlar.append(("Mikrobiyolojik Kontrol", ""))
+            for etiket, spek_metni in (mik.alt_satirlar or []):
+                ad = etiket if etiket.startswith("—") or etiket.startswith("-") else f"—{etiket}"
+                satirlar.append((ad, spek_metni))
+        return satirlar
+
+    for tablo_no, raf, tol in [(8, False, kart.serbest_birakma_tolerans),
+                               (9, True, kart.raf_omru_tolerans)]:
         t = _tablo_basliga_gore(doc, tablo_no)
-        if t is None or not bitmis:
+        if t is None:
             continue
-        sut = len(t.columns)
-        idxler = _veri_satirlarini_ayarla(t, 1, len(bitmis))
-        for ri, test in zip(idxler, bitmis):
+        satirlar = _satirlari_uret(raf, tol)
+        if not satirlar:
+            continue
+        idxler = _veri_satirlarini_ayarla(t, 1, len(satirlar))
+        for ri, (sol, sag) in zip(idxler, satirlar):
             cells = t.rows[ri].cells
-            spek_metni = test.spesifikasyon.metni_olustur()
-            if "miktar tayini" in test.ad.lower() and test.spesifikasyon.hedef_deger:
-                spek_metni = _miktar_spek_uret(
-                    test.spesifikasyon.hedef_deger, tol, test.spesifikasyon.birim)
-            if sut == 2:
-                hucre_yaz(cells[0], test.ad)
-                hucre_yaz(cells[1], spek_metni)
-            else:
-                hucre_yaz(cells[0], test.ad)
-                hucre_yaz(cells[-1], spek_metni)
+            hucre_yaz(cells[0], sol)
+            hucre_yaz(cells[-1], sag)
+        # Not: Tablo 9 '* Stabilite analizlerinde bakılmayacaktır.' notu şablonda
+        # zaten mevcut; tekrar eklenmez.
 
 
 def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:

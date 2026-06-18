@@ -532,11 +532,30 @@ def _ekle_sonuc_matris(doc, proje, test, no):
         r += 1
 
 
+def _genel_degerlendirme_paragrafi(doc):
+    """Şablondaki 'GENEL DEĞERLENDİRME' başlık paragrafını bulur (varsa)."""
+    for p in doc.paragraphs:
+        if "GENEL DEĞERLENDİRME" in p.text.strip().upper():
+            return p
+    return None
+
+
 def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
-    """PVR Bölüm 11 sonuç tablolarını belgenin sonuna ekler."""
-    doc.add_page_break()
+    """
+    PVR sonuç tablolarını şablondaki 'GENEL DEĞERLENDİRME' başlığının ÖNÜNE ekler.
+    Böylece Genel Değerlendirme HER ZAMAN en sonda kalır.
+    """
+    hedef = _genel_degerlendirme_paragrafi(doc)
+
+    # Sonuç bloğunu belge SONUNA üret (geçici), sonra hedefin önüne taşı.
+    # Üretilen yeni elemanları belirlemek için mevcut body çocuklarını işaretle.
+    from docx.oxml.ns import qn
+    body = doc.element.body
+    onceki = list(body)
+
+    # başlık
     h = doc.add_paragraph()
-    r = h.add_run("11. SONUÇLAR — PROSES VALİDASYONU TEST SONUÇLARI")
+    r = h.add_run("PROSES VALİDASYONU TEST SONUÇLARI")
     r.bold = True; r.font.size = Pt(12)
 
     no = 11
@@ -559,15 +578,15 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
         doc.add_paragraph("")
         no += 1
 
-    # Genel Değerlendirme HER ZAMAN en sonda
-    doc.add_paragraph("")
-    gh = doc.add_paragraph()
-    gr = gh.add_run("12. GENEL DEĞERLENDİRME")
-    gr.bold = True; gr.font.size = Pt(12)
-    doc.add_paragraph(f"Sapmalar: {proje.sapmalar}")
-    doc.add_paragraph(f"Sonuç: {proje.sonuc_degerlendirme}")
-    if proje.yorum:
-        doc.add_paragraph(f"Yorum: {proje.yorum}")
+    # Yeni eklenen elemanlar (başlık + tablolar + boş paragraflar)
+    yeni_elemanlar = [el for el in body if el not in onceki]
+
+    if hedef is not None:
+        hedef_el = hedef._p
+        for el in yeni_elemanlar:
+            body.remove(el)
+            hedef_el.addprevious(el)
+    # hedef yoksa zaten en sonda kalır (sorun değil)
 
 
 # ============================================================================

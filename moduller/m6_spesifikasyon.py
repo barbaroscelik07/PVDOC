@@ -118,6 +118,7 @@ class SpekModulu(QWidget):
         # Alt: test tablosu
         kok.addWidget(bolum_etiketi("Tanımlı Testler"))
         kok.addWidget(self._test_tablosu_olustur(), 1)
+        kok.addLayout(self._tasima_butonlari())
 
     # ---- sol: etkin madde + impurite (1.4) -------------------------------
     def _etkin_madde_bolumu(self) -> QVBoxLayout:
@@ -260,16 +261,49 @@ class SpekModulu(QWidget):
         t.setHorizontalHeaderLabels(
             ["Op.", "Operasyon", "Test Adı", "Spesifikasyon", "Tablo Tipi", "IPK", "*"]
         )
-        t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        t.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        # Kullanıcı sütun genişliklerini elle ayarlayabilsin (Interactive)
+        t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        t.horizontalHeader().setStretchLastSection(True)
+        t.setColumnWidth(0, 40)
+        t.setColumnWidth(1, 110)
+        t.setColumnWidth(2, 220)
+        t.setColumnWidth(3, 240)
+        t.setColumnWidth(4, 130)
+        t.setColumnWidth(5, 45)
+        t.setColumnWidth(6, 35)
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.verticalHeader().setVisible(False)
+        t.setMinimumHeight(260)
+        t.setWordWrap(True)
         self.tablo = t
 
         # Satır silme için kısayol: çift tık → sor
         t.cellDoubleClicked.connect(self._test_sil_sor)
         return t
+
+    def _tasima_butonlari(self) -> QHBoxLayout:
+        """Test sırasını elle değiştirme + operasyona göre otomatik sıralama."""
+        h = QHBoxLayout()
+        b_yukari = QPushButton("▲ Yukarı"); b_yukari.clicked.connect(lambda: self._tasi(-1))
+        b_asagi = QPushButton("▼ Aşağı"); b_asagi.clicked.connect(lambda: self._tasi(1))
+        b_sirala = QPushButton("Operasyona Göre Sırala")
+        b_sirala.clicked.connect(self._operasyona_gore_sirala)
+        h.addWidget(b_yukari); h.addWidget(b_asagi); h.addWidget(b_sirala); h.addStretch(1)
+        return h
+
+    def _tasi(self, yon: int) -> None:
+        r = self.tablo.currentRow()
+        yeni = r + yon
+        if 0 <= r < len(self.kart.testler) and 0 <= yeni < len(self.kart.testler):
+            self.kart.testler[r], self.kart.testler[yeni] = self.kart.testler[yeni], self.kart.testler[r]
+            self._tabloyu_yenile()
+            self.tablo.selectRow(yeni)
+
+    def _operasyona_gore_sirala(self) -> None:
+        """Testleri operasyon numarasına göre stabil sıralar (giriş sırası korunur)."""
+        self.kart.testler.sort(key=lambda t: (t.operasyon_no or 99))
+        self._tabloyu_yenile()
 
     # =====================================================================
     # Veri ↔ UI
@@ -517,8 +551,13 @@ class SpekModulu(QWidget):
     def _agirlik_ekle(self) -> None:
         """Ağırlık Tekdüzeliği: başlık + 1 açıklama satırı (limit kullanıcıdan)."""
         op = self.cmb_op.currentText()
-        alt = self.in_alt.text().strip() or "270.75"
-        ust = self.in_ust.text().strip() or "299.25"
+        alt = self.in_alt.text().strip()
+        ust = self.in_ust.text().strip()
+        if not alt or not ust:
+            QMessageBox.information(self, "Ağırlık Tekdüzeliği",
+                                    "Lütfen önce Alt Limit ve Üst Limit alanlarını doldurun "
+                                    "(örn. 270.75 ve 299.25).")
+            return
         test = Test(
             ad="Ağırlık Tekdüzeliği",
             operasyon=op,
@@ -555,7 +594,7 @@ class SpekModulu(QWidget):
         yeni.yildizli = False  # yıldız kopyalanmaz (kullanıcı kararı)
         yeni.sonuc_verisi = {}
         self.kart.testler.append(yeni)
-        self._tabloyu_yenile()
+        self._operasyona_gore_sirala()  # kopya sonrası otomatik düzenle
 
     def _test_sil_sor(self, row: int, _col: int) -> None:
         if not (0 <= row < len(self.kart.testler)):

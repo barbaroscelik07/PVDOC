@@ -358,6 +358,13 @@ def _yeni_tablo(doc, satir, sutun):
     return t
 
 
+def _seri_dict(seriler, c):
+    """seriler[c] güvenli dict erişimi (string/eksikse boş dict)."""
+    if c < len(seriler) and isinstance(seriler[c], dict):
+        return seriler[c]
+    return {}
+
+
 def _sr(cells, degerler, bold=False):
     for c, v in zip(cells, degerler):
         hucre_yaz(c, v, bold=bold) if c.paragraphs[0].runs else _yaz_bos(c, v, bold)
@@ -429,7 +436,7 @@ def _ekle_sonuc_iki(doc, proje, test, no):
     for ri, key, et in [(4, "numune_1", "Numune-1"), (5, "numune_2", "Numune-2"), (6, "sonuc", "Sonuç")]:
         _yaz_sol(t.rows[ri].cells[0], et, ri == 6)
         for c in range(SERI_SAYISI):
-            v = seriler[c].get(key, "") if c < len(seriler) else ""
+            v = _seri_dict(seriler, c).get(key, "")
             _yaz_bos(t.rows[ri].cells[c+1], v, ri == 6)
     # T.E. (tespit edilemedi) verisi varsa tablonun ALTINA not ekle
     if test.sonuc_verisi.get("te"):
@@ -453,11 +460,11 @@ def _ekle_sonuc_on(doc, proje, test, no):
     for n in range(10):
         _yaz_bos(t.rows[4+n].cells[0], str(n+1))
         for c in range(SERI_SAYISI):
-            olc = seriler[c].get("olcumler", []) if c < len(seriler) else []
+            olc = _seri_dict(seriler, c).get("olcumler", [])
             _yaz_bos(t.rows[4+n].cells[c+1], olc[n] if n < len(olc) else "")
     _yaz_bos(t.rows[14].cells[0], "Ortalama", True)
     for c in range(SERI_SAYISI):
-        _yaz_bos(t.rows[14].cells[c+1], seriler[c].get("ortalama", "") if c < len(seriler) else "", True)
+        _yaz_bos(t.rows[14].cells[c+1], _seri_dict(seriler, c).get("ortalama", ""), True)
 
 
 def _ekle_sonuc_bos(doc, proje, test, no, ns=10):
@@ -489,19 +496,19 @@ def _ekle_sonuc_bos(doc, proje, test, no, ns=10):
         col = 1
         for c in range(SERI_SAYISI):
             for nokta in NOKTA_ADLARI:
-                noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
+                noktalar = _seri_dict(seriler, c).get("noktalar", {})
                 olc = noktalar.get(nokta, {}).get("olcumler", [])
                 _yaz_bos(t.rows[4+n].cells[col], olc[n] if n < len(olc) else ""); col += 1
     _yaz_bos(t.rows[4+ns].cells[0], "Ortalama", True)
     col = 1
     for c in range(SERI_SAYISI):
         for nokta in NOKTA_ADLARI:
-            noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
+            noktalar = _seri_dict(seriler, c).get("noktalar", {})
             _yaz_bos(t.rows[4+ns].cells[col], noktalar.get(nokta, {}).get("ortalama", ""), True); col += 1
     _yaz_bos(t.rows[5+ns].cells[0], "Sonuç", True)
     col = 1
     for c in range(SERI_SAYISI):
-        sonuc = seriler[c].get("sonuc", "") if c < len(seriler) else ""
+        sonuc = _seri_dict(seriler, c).get("sonuc", "")
         a = t.rows[5+ns].cells[col]; a.merge(t.rows[5+ns].cells[col+2])
         _yaz_bos(a, sonuc, True); col += 3
 
@@ -513,6 +520,16 @@ def _ekle_sonuc_ortalama_agirlik(doc, proje, test, no):
     Değerler Ağırlık Tekdüzeliği nokta-ortalamalarından gelir (birebir eşleşir).
     """
     seriler = test.sonuc_verisi.get("seriler", [])
+    # Güvenlik: veri beklenen dict yapısında değilse (örn. test yanlış tiple
+    # eklenmiş ve string listesi gelmiş) boş nokta yapısına çevir.
+    def _nokta(c):
+        if c < len(seriler) and isinstance(seriler[c], dict):
+            return seriler[c].get("noktalar", {})
+        return {}
+    def _seri_sonuc(c):
+        if c < len(seriler) and isinstance(seriler[c], dict):
+            return seriler[c].get("sonuc", "")
+        return ""
     _sonuc_basligi(doc, no, test.ad)
     # Test + Spesifikasyon + Numuneler + nokta başlık + Sonuç + Ortalama = 6 satır
     t = _yeni_tablo(doc, 6, SERI_SAYISI * 3 + 1)
@@ -537,14 +554,14 @@ def _ekle_sonuc_ortalama_agirlik(doc, proje, test, no):
     _yaz_bos(t.rows[4].cells[0], "Sonuç", True)
     col = 1
     for c in range(SERI_SAYISI):
-        noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
+        noktalar = _nokta(c)
         for nokta in NOKTA_ADLARI:
             _yaz_bos(t.rows[4].cells[col], noktalar.get(nokta, {}).get("ortalama", ""), False); col += 1
     # Ortalama satırı: seri başına tek (3 nokta birleşik), seri ortalaması
     _yaz_bos(t.rows[5].cells[0], "Ortalama", True)
     col = 1
     for c in range(SERI_SAYISI):
-        sonuc = seriler[c].get("sonuc", "") if c < len(seriler) else ""
+        sonuc = _seri_sonuc(c)
         a = t.rows[5].cells[col]; a.merge(t.rows[5].cells[col+2])
         _yaz_bos(a, sonuc, True); col += 3
 
@@ -575,7 +592,7 @@ def _ekle_sonuc_agirlik(doc, proje, test, no):
         col = 1
         for c in range(SERI_SAYISI):
             for nokta in NOKTA_ADLARI:
-                noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
+                noktalar = _seri_dict(seriler, c).get("noktalar", {})
                 olc = noktalar.get(nokta, {}).get("olcumler", [])
                 _yaz_bos(t.rows[4+n].cells[col], olc[n] if n < len(olc) else ""); col += 1
     for k, (et, key) in enumerate([("Ortalama", "ortalama"), ("RSD%", "rsd"), ("SD", "sd")]):
@@ -583,7 +600,7 @@ def _ekle_sonuc_agirlik(doc, proje, test, no):
         col = 1
         for c in range(SERI_SAYISI):
             for nokta in NOKTA_ADLARI:
-                noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
+                noktalar = _seri_dict(seriler, c).get("noktalar", {})
                 _yaz_bos(t.rows[24+k].cells[col], noktalar.get(nokta, {}).get(key, ""), True); col += 1
 
 

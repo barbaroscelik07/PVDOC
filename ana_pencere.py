@@ -223,16 +223,26 @@ class AnaPencere(QMainWindow):
     def modulu_yenile(self, anahtar: str, panel: QWidget) -> None:
         """
         Gerçek bir modül tamamlandığında yer tutucuyu onunla değiştirir.
-        (Faz 1'den itibaren modüller bu metotla bağlanacak.)
+        Panel otomatik olarak dikey kaydırılabilir bir alana sarılır; böylece
+        pencere küçültüldüğünde (yarım ekran) sayfanın altı her zaman erişilebilir.
         """
         if anahtar not in self._paneller:
             return
+        from PyQt6.QtWidgets import QScrollArea
+        from PyQt6.QtCore import Qt as _Qt
+        kaydir = QScrollArea()
+        kaydir.setWidgetResizable(True)
+        kaydir.setFrameShape(QScrollArea.Shape.NoFrame)
+        kaydir.setHorizontalScrollBarPolicy(_Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        kaydir.setVerticalScrollBarPolicy(_Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        kaydir.setWidget(panel)
+
         eski = self._paneller[anahtar]
         idx = self.stack.indexOf(eski)
         self.stack.removeWidget(eski)
         eski.deleteLater()
-        self.stack.insertWidget(idx, panel)
-        self._paneller[anahtar] = panel
+        self.stack.insertWidget(idx, kaydir)
+        self._paneller[anahtar] = kaydir
 
     # --------------------------------------------------------- proje işlemleri
     def yeni_proje(self) -> None:

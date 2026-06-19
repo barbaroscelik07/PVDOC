@@ -65,7 +65,7 @@ class GenelBilgiModulu(QWidget):
         # Alanlar değişince anında veriye yaz
         self.in_firma.textChanged.connect(lambda t: self._yaz("firma_ismi", t))
         self.in_urun.textChanged.connect(self._urun_degisti)
-        self.in_pvp_no.textChanged.connect(lambda t: self._yaz("pvp_dokuman_no", t))
+        self.in_pvp_no.textChanged.connect(self._pvp_no_degisti)
         self.in_pvr_no.textChanged.connect(lambda t: self._yaz("pvr_dokuman_no", t))
         self.in_rev_no.textChanged.connect(lambda t: self._yaz("revizyon_no", t))
         self.in_rev_tarih.textChanged.connect(lambda t: self._yaz("revizyon_tarihi", t))
@@ -94,8 +94,46 @@ class GenelBilgiModulu(QWidget):
         return t
 
     # -------------------------------------------------------------- veri ↔ UI
+    def _seri_no_otomatik_artir(self, ilk: str) -> None:
+        """
+        İlk seri no'nun SONUNDAKİ sayıyı +1 yaparak alt 2 satırı doldurur.
+        'NI00101-2606-P01' → P02, P03. Sayı bulunamazsa dokunmaz.
+        """
+        import re
+        m = re.search(r"(\d+)(\D*)$", ilk)
+        if not m:
+            return
+        sayi = m.group(1)
+        son_ek = m.group(2)
+        bas = ilk[:m.start(1)]
+        genislik = len(sayi)
+        try:
+            taban = int(sayi)
+        except ValueError:
+            return
+        self.seri_tablo.blockSignals(True)
+        for r in range(1, SERI_SAYISI):
+            yeni_sayi = str(taban + r).zfill(genislik)
+            yeni = f"{bas}{yeni_sayi}{son_ek}"
+            self.proje.seriler[r].seri_no = yeni
+            self._hucreyi_ayarla(r, 1, yeni)
+        self.seri_tablo.blockSignals(False)
+
     def _yaz(self, alan: str, deger: str) -> None:
         setattr(self.proje.dokuman, alan, deger)
+
+    def _pvp_no_degisti(self, t: str) -> None:
+        self.proje.dokuman.pvp_dokuman_no = t
+        # PVR doküman no otomatik: PVP + "-R" (kullanıcı elle değiştirmediyse)
+        mevcut_pvr = self.in_pvr_no.text().strip()
+        otomatik_onceki = getattr(self, "_otomatik_pvr", "")
+        if not mevcut_pvr or mevcut_pvr == otomatik_onceki:
+            yeni_pvr = f"{t}-R" if t.strip() else ""
+            self._otomatik_pvr = yeni_pvr
+            self.in_pvr_no.blockSignals(True)
+            self.in_pvr_no.setText(yeni_pvr)
+            self.in_pvr_no.blockSignals(False)
+            self.proje.dokuman.pvr_dokuman_no = yeni_pvr
 
     def _urun_degisti(self, t: str) -> None:
         self.proje.dokuman.urun_adi = t
@@ -118,6 +156,8 @@ class GenelBilgiModulu(QWidget):
             seri.urun_ismi = v
         elif col == 1:
             seri.seri_no = v
+            if row == 0:
+                self._seri_no_otomatik_artir(v)
         elif col == 2:
             seri.seri_boyutu_adet = v
             if row == 0:

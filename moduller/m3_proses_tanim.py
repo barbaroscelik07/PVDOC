@@ -63,18 +63,19 @@ class ProsesModulu(QWidget):
         sag = QVBoxLayout()
         sag.setSpacing(8)
         izg = QGridLayout(); izg.setHorizontalSpacing(10); izg.setVerticalSpacing(8)
+        # Operasyon No ve Aşama No ALT ALTA (kullanıcı isteği)
         izg.addWidget(QLabel("Operasyon No:"), 0, 0)
         self.sp_op = QSpinBox(); self.sp_op.setRange(0, 99)
-        self.sp_op.valueChanged.connect(self._detay_yaz)
+        self.sp_op.valueChanged.connect(self._operasyon_no_degisti)
         izg.addWidget(self.sp_op, 0, 1)
-        izg.addWidget(QLabel("Aşama No:"), 0, 2)
+        izg.addWidget(QLabel("Aşama No:"), 1, 0)
         self.sp_as = QSpinBox(); self.sp_as.setRange(0, 99)
         self.sp_as.valueChanged.connect(self._detay_yaz)
-        izg.addWidget(self.sp_as, 0, 3)
-        izg.addWidget(QLabel("IPK Etiketi:"), 1, 0)
+        izg.addWidget(self.sp_as, 1, 1)
+        izg.addWidget(QLabel("IPK Etiketi:"), 2, 0)
         self.in_ipk = QLineEdit(); self.in_ipk.setPlaceholderText("örn. IPK-1 (boş bırakılabilir)")
         self.in_ipk.textChanged.connect(self._detay_yaz)
-        izg.addWidget(self.in_ipk, 1, 1, 1, 3)
+        izg.addWidget(self.in_ipk, 2, 1)
         sag.addLayout(izg)
 
         sag.addWidget(QLabel("Açıklama:"))
@@ -108,13 +109,7 @@ class ProsesModulu(QWidget):
         bolucu.addWidget(sag_w)
         bolucu.setStretchFactor(1, 1)
         bolucu.setSizes([260, 600])
-
-        # Tüm gövdeyi dikey kaydırılabilir yap (dar/yarım ekranda butonlar erişilebilir kalır)
-        kaydir = QScrollArea()
-        kaydir.setWidgetResizable(True)
-        kaydir.setWidget(bolucu)
-        kaydir.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        kok.addWidget(kaydir, 1)
+        kok.addWidget(bolucu, 1)
 
         self._detay_aktif(False)
 
@@ -177,6 +172,15 @@ class ProsesModulu(QWidget):
             w.blockSignals(False)
         self._param_doldur(a)
 
+    def _operasyon_no_degisti(self) -> None:
+        """Operasyon no değişince aşama no otomatik 1'den başlar (kullanıcı isteği)."""
+        a = self._aktif_asama()
+        if a and self.sp_op.value() != a.operasyon_no:
+            self.sp_as.blockSignals(True)
+            self.sp_as.setValue(1)
+            self.sp_as.blockSignals(False)
+        self._detay_yaz()
+
     def _detay_yaz(self) -> None:
         a = self._aktif_asama()
         if not a:
@@ -223,11 +227,16 @@ class ProsesModulu(QWidget):
             a.parametreler[row].deger = v
 
     def _param_doldur(self, a: Asama) -> None:
+        from PyQt6.QtGui import QColor, QBrush
+        acik = QBrush(QColor("#1a1f2b"))   # koyu yazı (açık hücre zemini için)
         self.t_param.blockSignals(True)
         self.t_param.setRowCount(0)
         for p in a.parametreler:
             r = self.t_param.rowCount()
             self.t_param.insertRow(r)
-            self.t_param.setItem(r, 0, QTableWidgetItem(p.etiket))
-            self.t_param.setItem(r, 1, QTableWidgetItem(p.deger))
+            for c, val in ((0, p.etiket), (1, p.deger)):
+                it = QTableWidgetItem(val)
+                it.setForeground(acik)
+                it.setBackground(QBrush(QColor("#ffffff")))
+                self.t_param.setItem(r, c, it)
         self.t_param.blockSignals(False)

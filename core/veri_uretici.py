@@ -293,8 +293,49 @@ def tum_testleri_uret(testler: list[Test], tohum: int | None = None) -> None:
     """
     Verilen testlerin her biri için sonuç verisi üretip Test.sonuc_verisi'ne yazar.
     tohum verilirse tekrarlanabilir sonuç üretilir (test/doğrulama için).
+
+    Özel bağlantı: 'Ortalama Ağırlık' sonuçları, 'Ağırlık Tekdüzeliği'nin
+    nokta-ortalamalarıyla BİREBİR eşleşir (kullanıcı kuralı). Bu yüzden önce
+    Ağırlık Tekdüzeliği üretilir, sonra Ortalama Ağırlık ondan türetilir.
     """
     if tohum is not None:
         random.seed(tohum)
+
+    # 1) Ağırlık Tekdüzeliği testini önce üret
+    agirlik_test = None
     for test in testler:
-        test.sonuc_verisi = test_verisi_uret(test)
+        if test.tablo_tipi is TabloTipi.AGIRLIK_TEKDUZELIGI:
+            test.sonuc_verisi = test_verisi_uret(test)
+            agirlik_test = test
+            break
+
+    # 2) Diğer testleri üret; Ortalama Ağırlık'ı Ağırlık Tekdüzeliği'nden türet
+    for test in testler:
+        if test is agirlik_test:
+            continue
+        if "ortalama ağırlık" in test.ad.lower() and agirlik_test is not None:
+            test.sonuc_verisi = _ortalama_agirlik_turet(agirlik_test, test.spesifikasyon)
+        else:
+            test.sonuc_verisi = test_verisi_uret(test)
+
+
+def _ortalama_agirlik_turet(agirlik_test: Test, spek: Spesifikasyon) -> dict:
+    """
+    Ortalama Ağırlık sonuç verisini, Ağırlık Tekdüzeliği'nin nokta
+    ortalamalarından türetir. Her seri/nokta için tek değer = o noktanın
+    20 tablet ortalaması. Böylece iki tablo birebir eşleşir.
+    Yapı BOS_NOKTA ile uyumlu: seriler[i]['noktalar'][nokta]['ortalama'].
+    """
+    seriler = []
+    for sr in agirlik_test.sonuc_verisi.get("seriler", []):
+        noktalar = {}
+        nokta_ort = []
+        for nokta in NOKTA_ADLARI:
+            ort = sr.get("noktalar", {}).get(nokta, {}).get("ortalama", 0.0)
+            noktalar[nokta] = {"olcumler": [ort], "ortalama": ort}
+            nokta_ort.append(ort)
+        seriler.append({
+            "noktalar": noktalar,
+            "sonuc": round(ortalama(nokta_ort), spek.ondalik),
+        })
+    return {"seriler": seriler}

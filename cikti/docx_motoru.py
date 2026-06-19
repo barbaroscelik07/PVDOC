@@ -506,6 +506,49 @@ def _ekle_sonuc_bos(doc, proje, test, no, ns=10):
         _yaz_bos(a, sonuc, True); col += 3
 
 
+def _ekle_sonuc_ortalama_agirlik(doc, proje, test, no):
+    """
+    Ortalama Ağırlık (resim 36): Test / Spesifikasyon / Numuneler+Analiz /
+    Seri No + Baş/Orta/Son / Sonuç (her nokta tek değer) / Ortalama (seri ort).
+    Değerler Ağırlık Tekdüzeliği nokta-ortalamalarından gelir (birebir eşleşir).
+    """
+    seriler = test.sonuc_verisi.get("seriler", [])
+    _sonuc_basligi(doc, no, test.ad)
+    # Test + Spesifikasyon + Numuneler + nokta başlık + Sonuç + Ortalama = 6 satır
+    t = _yeni_tablo(doc, 6, SERI_SAYISI * 3 + 1)
+    _yaz_bos(t.rows[0].cells[0], "Test", True)
+    t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI * 3])
+    _yaz_sol(t.rows[0].cells[1], test.ad)
+    _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
+    t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI * 3])
+    _yaz_sol(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
+    # Numuneler / Seri No (3'er birleşik) + nokta başlıkları
+    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
+    col = 1
+    for sno in _seri_nolar(proje):
+        a = t.rows[2].cells[col]; a.merge(t.rows[2].cells[col+2])
+        _yaz_bos(a, f"Seri No: {sno}", True); col += 3
+    t.rows[2].cells[0].merge(t.rows[3].cells[0])
+    col = 1
+    for _ in range(SERI_SAYISI):
+        for nokta in NOKTA_ADLARI:
+            _yaz_bos(t.rows[3].cells[col], nokta, True); col += 1
+    # Sonuç satırı: her nokta tek değer (= Ağırlık Tekdüzeliği nokta ortalaması)
+    _yaz_bos(t.rows[4].cells[0], "Sonuç", True)
+    col = 1
+    for c in range(SERI_SAYISI):
+        noktalar = seriler[c].get("noktalar", {}) if c < len(seriler) else {}
+        for nokta in NOKTA_ADLARI:
+            _yaz_bos(t.rows[4].cells[col], noktalar.get(nokta, {}).get("ortalama", ""), False); col += 1
+    # Ortalama satırı: seri başına tek (3 nokta birleşik), seri ortalaması
+    _yaz_bos(t.rows[5].cells[0], "Ortalama", True)
+    col = 1
+    for c in range(SERI_SAYISI):
+        sonuc = seriler[c].get("sonuc", "") if c < len(seriler) else ""
+        a = t.rows[5].cells[col]; a.merge(t.rows[5].cells[col+2])
+        _yaz_bos(a, sonuc, True); col += 3
+
+
 def _ekle_sonuc_agirlik(doc, proje, test, no):
     """Ağırlık Tekdüzeliği: 20 numune × Baş/Orta/Son × seri + Ort/RSD/SD."""
     seriler = test.sonuc_verisi.get("seriler", [])
@@ -616,6 +659,8 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
         tip = test.tablo_tipi
         if test.mikrobiyolojik or tip is TabloTipi.MATRIS:
             _ekle_sonuc_matris(doc, proje, test, no)
+        elif "ortalama ağırlık" in test.ad.lower():
+            _ekle_sonuc_ortalama_agirlik(doc, proje, test, no)
         elif tip is TabloTipi.TEK_SONUC:
             _ekle_sonuc_tek(doc, proje, test, no)
         elif tip is TabloTipi.IKI_NUMUNE:

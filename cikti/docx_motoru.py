@@ -370,9 +370,19 @@ def _sr(cells, degerler, bold=False):
         hucre_yaz(c, v, bold=bold) if c.paragraphs[0].runs else _yaz_bos(c, v, bold)
 
 
+def _bicimle(metin):
+    """Sayısal değerleri her zaman 2 ondalıkla biçimler (1 -> 1,00, 0.6 -> 0,60).
+    Metin/None ise olduğu gibi döner. Türkçe ondalık ayracı (,) kullanılır."""
+    if metin is None or metin == "":
+        return ""
+    if isinstance(metin, (int, float)):
+        return f"{metin:.2f}".replace(".", ",")
+    return str(metin)
+
+
 def _yaz_bos(cell, metin, bold=False):
     p = cell.paragraphs[0]
-    r = p.add_run(str(metin))
+    r = p.add_run(_bicimle(metin))
     r.bold = bold
     r.font.size = Pt(9)
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -604,6 +614,88 @@ def _ekle_sonuc_agirlik(doc, proje, test, no):
                 _yaz_bos(t.rows[24+k].cells[col], noktalar.get(nokta, {}).get(key, ""), True); col += 1
 
 
+def _ekle_sonuc_impurite(doc, proje, imp, baslik, no, tohum_ek=0):
+    """
+    Bir impurite için sonuç tablosu (resim — Tablo 25-28):
+      Test | <başlık>  (örn. 'Etkin madde 1 imp. a')
+      Spesifikasyon | <limit metni>
+      Numuneler/Analiz | Seri No
+      Numune 1 / Numune 2 / Sonuç
+    Maksimum değere uyar; T.E. ise hepsi 'T.E.' + alt not.
+    """
+    import random as _r
+    _sonuc_basligi(doc, no, baslik)
+    t = _yeni_tablo(doc, 7, SERI_SAYISI + 1)
+    _yaz_bos(t.rows[0].cells[0], "Test", True)
+    t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI])
+    _yaz_sol(t.rows[0].cells[1], baslik)
+    _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
+    t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI])
+    _yaz_sol(t.rows[1].cells[1], imp.limit_metni or "")
+    # Numuneler / Analiz Sonuçları + Seri No
+    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
+    t.rows[2].cells[1].merge(t.rows[2].cells[SERI_SAYISI])
+    _yaz_bos(t.rows[2].cells[1], "Analiz Sonuçları", True)
+    t.rows[2].cells[0].merge(t.rows[3].cells[0])
+    for c, sno in enumerate(_seri_nolar(proje), 1):
+        _yaz_bos(t.rows[3].cells[c], f"Seri No: {sno}", True)
+
+    te = imp.te or (str(imp.limit_metni).upper().replace(" ", "").endswith("T.E.")
+                    if imp.limit_metni else False)
+    maks = imp.maksimum_deger
+    for ri, et in [(4, "Numune 1"), (5, "Numune 2"), (6, "Sonuç")]:
+        _yaz_sol(t.rows[ri].cells[0], et, ri == 6)
+        for c in range(SERI_SAYISI):
+            if te:
+                deg = "T.E."
+            elif maks:
+                # maksimumun altında sağlıklı değer (örn maks*0.05–0.6)
+                deg = _bicimle_sayi(_r.uniform(maks * 0.05, maks * 0.6))
+            else:
+                deg = "T.E."
+            _yaz_bos(t.rows[ri].cells[c+1], deg, ri == 6)
+    if te:
+        np = doc.add_paragraph()
+        nr = np.add_run("T.E.: Tespit edilemedi.")
+        nr.italic = True; nr.font.size = Pt(8)
+
+
+def _bicimle_sayi(deger, ondalik=2) -> str:
+    """Çıktı motoru içi: sayıyı 2 ondalık + Türkçe virgülle string yapar."""
+    try:
+        return f"{float(deger):.{ondalik}f}".replace(".", ",")
+    except (ValueError, TypeError):
+        return str(deger)
+
+
+def _ekle_limit_tablosu(doc, proje, baslik, limit_metni, no):
+    """
+    Ağırlık Tekdüzeliği limit tablosu (resim 2 — Tablo 35/36):
+      Test | <başlık>
+      Spesifikasyon | <limit metni>
+      Numuneler / Analiz Sonuçları | Seri No
+      Sonuç | <limit metni> × 3 seri
+    """
+    doc.add_paragraph("")
+    _sonuc_basligi(doc, no, baslik)
+    t = _yeni_tablo(doc, 5, SERI_SAYISI + 1)
+    _yaz_bos(t.rows[0].cells[0], "Test", True)
+    t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI])
+    _yaz_sol(t.rows[0].cells[1], baslik)
+    _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
+    t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI])
+    _yaz_sol(t.rows[1].cells[1], limit_metni)
+    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
+    t.rows[2].cells[1].merge(t.rows[2].cells[SERI_SAYISI])
+    _yaz_bos(t.rows[2].cells[1], "Analiz Sonuçları", True)
+    t.rows[2].cells[0].merge(t.rows[3].cells[0])
+    for c, sno in enumerate(_seri_nolar(proje), 1):
+        _yaz_bos(t.rows[3].cells[c], f"Seri No: {sno}", True)
+    _yaz_bos(t.rows[4].cells[0], "Sonuç", True)
+    for c in range(SERI_SAYISI):
+        _yaz_bos(t.rows[4].cells[c+1], limit_metni, False)
+
+
 def _ekle_sonuc_matris(doc, proje, test, no):
     """
     Mikrobiyolojik Kontrol (resimdeki Tablo 33/34):
@@ -688,10 +780,28 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
             _ekle_sonuc_bos(doc, proje, test, no)
         elif tip is TabloTipi.AGIRLIK_TEKDUZELIGI:
             _ekle_sonuc_agirlik(doc, proje, test, no)
+            # Resim 2: ayrıca 2 limit tablosu (sapabilir + sapmamalıdır)
+            if test.aciklama_etiketi:
+                no += 1
+                baslik1 = test.aciklama_etiketi.lstrip("—- ").strip()
+                _ekle_limit_tablosu(doc, proje, baslik1, test.aciklama_spek, no)
+            if test.aciklama2_etiketi:
+                no += 1
+                baslik2 = test.aciklama2_etiketi.lstrip("—- ").strip()
+                _ekle_limit_tablosu(doc, proje, baslik2, test.aciklama2_spek, no)
         else:
             _ekle_sonuc_tek(doc, proje, test, no)
         doc.add_paragraph("")
         no += 1
+
+    # İlgili Bileşikler (impurite) sonuç tabloları — her etkin maddenin her impuritesi
+    for em in proje.spek_karti.etkin_maddeler:
+        for imp in em.impuriteler:
+            ad = imp.ad if imp.ad.startswith("—") or imp.ad.startswith("-") else imp.ad
+            baslik = f"{em.ad} {ad}".replace("—", "").replace("- ", "").strip()
+            _ekle_sonuc_impurite(doc, proje, imp, baslik, no)
+            doc.add_paragraph("")
+            no += 1
 
     # Yeni eklenen elemanlar (başlık + tablolar + boş paragraflar)
     yeni_elemanlar = [el for el in body if el not in onceki]

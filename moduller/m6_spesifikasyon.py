@@ -148,12 +148,17 @@ class SpekModulu(QWidget):
         imp_btn = QHBoxLayout()
         bi_ekle = QPushButton("+ İmpurite")
         bi_ekle.clicked.connect(self._imp_ekle)
+        bi_duzenle = QPushButton("Düzenle")
+        bi_duzenle.clicked.connect(self._imp_duzenle)
         bi_sil = QPushButton("− Sil")
         bi_sil.setObjectName("tehlike")
         bi_sil.clicked.connect(self._imp_sil)
         imp_btn.addWidget(bi_ekle)
+        imp_btn.addWidget(bi_duzenle)
         imp_btn.addWidget(bi_sil)
         d.addLayout(imp_btn)
+        # çift tık → düzenle
+        self.liste_imp.itemDoubleClicked.connect(lambda _: self._imp_duzenle())
         return d
 
     # ---- sağ: test ekleme formu (1.3) ------------------------------------
@@ -483,14 +488,49 @@ class SpekModulu(QWidget):
             del em.impuriteler[r]
             self._imp_listesini_yenile()
 
+    def _imp_duzenle(self) -> None:
+        """Seçili impuriteyi dialog ile düzenler."""
+        em = self._secili_em()
+        r = self.liste_imp.currentRow()
+        if not em or not (0 <= r < len(em.impuriteler)):
+            QMessageBox.information(self, "İmpurite", "Önce listeden bir impurite seçin.")
+            return
+        imp = em.impuriteler[r]
+        operasyonlar = [self.cmb_op.itemText(i) for i in range(self.cmb_op.count())]
+        dlg = ImpuriteDialog(self, operasyonlar=operasyonlar)
+        # mevcut değerleri yükle
+        dlg.in_ad.setText(imp.ad)
+        dlg.in_limit.setText(imp.limit_metni)
+        maks = "T.E." if imp.te else (str(imp.maksimum_deger) if imp.maksimum_deger is not None else "")
+        dlg.in_maks.setText(maks)
+        idx = dlg.cmb_op.findText(imp.operasyon)
+        if idx >= 0:
+            dlg.cmb_op.setCurrentIndex(idx)
+        dlg.chk_yildiz.setChecked(imp.yildizli)
+        if not dlg.exec():
+            return
+        v = dlg.degerler()
+        if not v["ad"]:
+            return
+        maks_t = (v["maks"] or "").strip()
+        te = maks_t.upper().replace(" ", "") in ("T.E.", "T.E", "TE")
+        imp.ad = v["ad"]
+        imp.limit_metni = v["limit"] or (f"Maksimum %{maks_t}" if maks_t and not te else ("Maksimum T.E." if te else ""))
+        imp.maksimum_deger = self._sayi(maks_t)
+        imp.operasyon = v["operasyon"]
+        imp.operasyon_no = self._OP_NO.get(v["operasyon"], 0)
+        imp.yildizli = v["yildiz"]
+        imp.te = te
+        self._imp_listesini_yenile()
+
     # ---- limit türü (1.3) ----
     def _limit_turu_degisti(self) -> None:
         tur = _LIMIT_SECENEKLERI[self.cmb_limit.currentIndex()][1]
         goster = {
             "hedef": tur is LimitTuru.ARALIK,
             "tol": tur is LimitTuru.ARALIK,
-            "alt": tur in (LimitTuru.ARALIK, LimitTuru.METIN),
-            "ust": tur in (LimitTuru.ARALIK, LimitTuru.METIN),
+            "alt": True,   # Alt limit HER ZAMAN görünür (veri üretimi için)
+            "ust": True,   # Üst limit HER ZAMAN görünür (veri üretimi için)
             "min": tur is LimitTuru.MINIMUM,
             "maks": tur is LimitTuru.MAKSIMUM,
             "metin": True,   # Sabit sonuç metni HER ZAMAN görünür (spek hücresinde gösterilir)

@@ -140,6 +140,21 @@ def _uretim_araligi(spek: Spesifikasyon) -> tuple[float, float]:
     return 0.0, 1.0
 
 
+def _bicimle(deger, ondalik: int = 2) -> str:
+    """
+    Sayıyı sabit ondalık + Türkçe virgülle string'e çevirir.
+    99.7 -> '99,70', 1 -> '1,00', 0.6 -> '0,60'. String/None aynen döner.
+    """
+    if deger is None or deger == "":
+        return ""
+    if isinstance(deger, str):
+        return deger  # T.E., Uygun, Pozitif vb. dokunma
+    try:
+        return f"{float(deger):.{ondalik}f}".replace(".", ",")
+    except (ValueError, TypeError):
+        return str(deger)
+
+
 def _deger(spek: Spesifikasyon, alt: float, ust: float) -> float:
     """Aralıkta rastgele bir değeri spek ondalığına yuvarlayarak üretir."""
     v = random.uniform(alt, ust)
@@ -192,8 +207,8 @@ def _iki_numune(spek: Spesifikasyon) -> dict:
         n1 = _deger(spek, alt, ust)
         n2 = _deger(spek, alt, ust)
         seriler.append({
-            "numune_1": n1, "numune_2": n2,
-            "sonuc": round((n1 + n2) / 2, spek.ondalik),
+            "numune_1": _bicimle(n1), "numune_2": _bicimle(n2),
+            "sonuc": _bicimle((n1 + n2) / 2),
         })
     return {"seriler": seriler}
 
@@ -217,10 +232,11 @@ def _on_numune(spek: Spesifikasyon) -> dict:
         # ölçümleri hedef ortalamaya kaydır
         mevcut = sum(olcumler) / len(olcumler)
         fark = hedef_ort - mevcut
-        olcumler = [min(DEGER_UST, max(DEGER_ALT, round(v + fark, spek.ondalik))) for v in olcumler]
+        olcumler = [min(DEGER_UST, max(DEGER_ALT, round(v + fark, 2))) for v in olcumler]
+        ort = ortalama(olcumler)
         seriler.append({
-            "olcumler": olcumler,
-            "ortalama": round(ortalama(olcumler), spek.ondalik),
+            "olcumler": [_bicimle(o) for o in olcumler],
+            "ortalama": _bicimle(ort),
         })
     return {"seriler": seriler}
 
@@ -237,12 +253,16 @@ def _bos_nokta(spek: Spesifikasyon, numune_sayisi: int = 10) -> dict:
         nokta_ort = []
         for nokta in NOKTA_ADLARI:
             olcumler = [_deger(spek, alt, ust) for _ in range(numune_sayisi)]
-            o = round(ortalama(olcumler), spek.ondalik)
-            noktalar[nokta] = {"olcumler": olcumler, "ortalama": o}
+            o = round(ortalama(olcumler), 2)
+            noktalar[nokta] = {
+                "olcumler": [_bicimle(x) for x in olcumler],
+                "ortalama": _bicimle(o),
+                "_ham_ortalama": o,   # türetme/eşleşme için ham değer
+            }
             nokta_ort.append(o)
         seriler.append({
             "noktalar": noktalar,
-            "sonuc": round(ortalama(nokta_ort), spek.ondalik),
+            "sonuc": _bicimle(ortalama(nokta_ort)),
         })
     return {"seriler": seriler}
 
@@ -255,11 +275,13 @@ def _agirlik_tekduzeligi(spek: Spesifikasyon) -> dict:
         noktalar = {}
         for nokta in NOKTA_ADLARI:
             olcumler = [_deger(spek, alt, ust) for _ in range(20)]
+            o = round(ortalama(olcumler), 2)
             noktalar[nokta] = {
-                "olcumler": olcumler,
-                "ortalama": round(ortalama(olcumler), spek.ondalik),
-                "rsd": round(rsd_yuzde(olcumler), 2),
-                "sd": round(std_sapma(olcumler), 2),
+                "olcumler": [_bicimle(x) for x in olcumler],
+                "ortalama": _bicimle(o),
+                "_ham_ortalama": o,    # Ortalama Ağırlık türetmesi için
+                "rsd": _bicimle(rsd_yuzde(olcumler)),
+                "sd": _bicimle(std_sapma(olcumler)),
             }
         seriler.append({"noktalar": noktalar})
     return {"seriler": seriler}
@@ -331,11 +353,13 @@ def _ortalama_agirlik_turet(agirlik_test: Test, spek: Spesifikasyon) -> dict:
         noktalar = {}
         nokta_ort = []
         for nokta in NOKTA_ADLARI:
-            ort = sr.get("noktalar", {}).get(nokta, {}).get("ortalama", 0.0)
-            noktalar[nokta] = {"olcumler": [ort], "ortalama": ort}
-            nokta_ort.append(ort)
+            # Ağırlık Tekdüzeliği'nin HAM nokta ortalamasını kullan (birebir eşleşme)
+            ham = sr.get("noktalar", {}).get(nokta, {}).get("_ham_ortalama", 0.0)
+            noktalar[nokta] = {"olcumler": [_bicimle(ham)], "ortalama": _bicimle(ham),
+                               "_ham_ortalama": ham}
+            nokta_ort.append(ham)
         seriler.append({
             "noktalar": noktalar,
-            "sonuc": round(ortalama(nokta_ort), spek.ondalik),
+            "sonuc": _bicimle(ortalama(nokta_ort)),
         })
     return {"seriler": seriler}

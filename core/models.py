@@ -310,6 +310,10 @@ class SpekKarti:
     serbest_birakma_tolerans: str = "±%5"     # Tablo 8 miktar tayini toleransı
     raf_omru_tolerans: str = "±%7.5"          # Tablo 9 miktar tayini toleransı
 
+    # Açıksa: testler[] BİTMİŞ ÜRÜN listesi kabul edilir; çıktıda kural motoruyla
+    # tüm aşamalara dağıtılır (Tablo 6/7/9 otomatik türetilir).
+    otomatik_turet: bool = True
+
     # Eski alanlar (manuel/kopyala-yapıştır) — ileride kullanılabilir
     serbest_birakma: list[dict[str, str]] = field(default_factory=list)
     raf_omru: list[dict[str, str]] = field(default_factory=list)

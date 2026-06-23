@@ -968,24 +968,49 @@ def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
     _doldur_numune(doc, proje)
 
 
+def _turetilmis_testlerle(proje: ProjeVerisi):
+    """
+    Context manager: otomatik_turet açıksa, spek_karti.testler (bitmiş ürün
+    listesi) kural motoruyla tüm aşamalara dağıtılır. Çıkışta orijinal liste
+    geri yüklenir (kullanıcının girdiği liste bozulmaz).
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _ctx():
+        kart = proje.spek_karti
+        if not getattr(kart, "otomatik_turet", False):
+            yield
+            return
+        from core.kural_motoru import testleri_turet
+        orijinal = kart.testler
+        ops = proje.urun_formu.operasyonlar
+        kart.testler = testleri_turet(orijinal, ops, kart.etkin_maddeler)
+        try:
+            yield
+        finally:
+            kart.testler = orijinal
+    return _ctx()
+
+
 def pvp_uret(proje: ProjeVerisi, cikti_yolu: str | Path) -> Path:
-    doc = Document(str(_sablon_yolu("PVP_sablon.docx")))
-    _ortak_doldur(doc, proje, rapor=False)
-    yol = Path(cikti_yolu)
-    doc.save(str(yol))
+    with _turetilmis_testlerle(proje):
+        doc = Document(str(_sablon_yolu("PVP_sablon.docx")))
+        _ortak_doldur(doc, proje, rapor=False)
+        yol = Path(cikti_yolu)
+        doc.save(str(yol))
     return yol
 
 
 def pvr_uret(proje: ProjeVerisi, cikti_yolu: str | Path, veri_uret: bool = True,
              tohum: int | None = None) -> Path:
-    if veri_uret:
-        vu.tum_testleri_uret(proje.spek_karti.testler, tohum=tohum)
-    # PVR, TEMIZ PVP şablonundan üretilir; sonuç tabloları (Bölüm 11) temiz eklenir.
-    # (PVR şablonu zaten dolu örnek sonuç tabloları içerdiği için kullanılmaz —
-    #  aksi halde çift içerik oluşurdu.)
-    doc = Document(str(_sablon_yolu("PVP_sablon.docx")))
-    _ortak_doldur(doc, proje, rapor=True)
-    _doldur_sonuclar(doc, proje)
-    yol = Path(cikti_yolu)
-    doc.save(str(yol))
+    with _turetilmis_testlerle(proje):
+        if veri_uret:
+            vu.tum_testleri_uret(proje.spek_karti.testler, tohum=tohum)
+        # PVR, TEMIZ PVP şablonundan üretilir; sonuç tabloları (Bölüm 11) temiz eklenir.
+        doc = Document(str(_sablon_yolu("PVP_sablon.docx")))
+        _ortak_doldur(doc, proje, rapor=True)
+        _doldur_sonuclar(doc, proje)
+        yol = Path(cikti_yolu)
+        doc.save(str(yol))
     return yol

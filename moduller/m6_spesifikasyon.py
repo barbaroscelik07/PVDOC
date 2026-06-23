@@ -66,9 +66,9 @@ class SpekModulu(QWidget):
         kok = QVBoxLayout(self)
         kok.setContentsMargins(22, 22, 22, 22)
         kok.setSpacing(12)
-        kok.addWidget(baslik_etiketi("Spesifikasyonlar (Tablo 6)"))
+        kok.addWidget(baslik_etiketi("Bitmiş Ürün Spesifikasyonları (Tablo 8)"))
 
-        # Üst satır: ürün formu + Tablo 8/9
+        # Üst satır: ürün formu + otomatik türet + Tablo 8/9
         ust = QHBoxLayout()
         ust.addWidget(QLabel("Ürün Formu:"))
         self.cmb_form = QComboBox()
@@ -77,10 +77,18 @@ class SpekModulu(QWidget):
         self.cmb_form.currentIndexChanged.connect(self._form_degisti)
         ust.addWidget(self.cmb_form)
         ust.addStretch(1)
+        self.chk_turet = QCheckBox("Tablo 6/7/9'u otomatik türet (kurallarla)")
+        self.chk_turet.setChecked(True)
+        self.chk_turet.toggled.connect(lambda v: setattr(self.kart, "otomatik_turet", v))
+        ust.addWidget(self.chk_turet)
+        kok.addLayout(ust)
+
+        ust2 = QHBoxLayout()
+        ust2.addStretch(1)
         self.chk_t89 = QCheckBox("Tablo 8/9 (Serbest Bırakma / Raf Ömrü) otomatik üret")
         self.chk_t89.toggled.connect(lambda v: setattr(self.kart, "tablo89_ekle", v))
-        ust.addWidget(self.chk_t89)
-        kok.addLayout(ust)
+        ust2.addWidget(self.chk_t89)
+        kok.addLayout(ust2)
 
         tol = QHBoxLayout()
         tol.addWidget(QLabel("Serbest Bırakma tol.:"))
@@ -95,9 +103,10 @@ class SpekModulu(QWidget):
         kok.addLayout(tol)
 
         kok.addWidget(ipucu_etiketi(
-            "Hücrelere doğrudan yazın. Test adına etkin maddeyi gömün "
-            "(örn. ‘Etkin madde 1 Miktar Tayini’). Alt/Üst limit sonuç üretimi içindir; "
-            "boş bırakırsanız program spesifikasyon metninden sayıları çıkarır."
+            "Otomatik türetme AÇIK: sadece bitmiş ürün testlerini girin "
+            "(Görünüş, Elek Testi, Sertlik, Miktar Tayini, Mikrobiyolojik…). "
+            "Program bunları kurallarla tüm aşamalara dağıtıp Tablo 6/7/9'u üretir. "
+            "Etkin maddeyi test adına gömün (örn. ‘Etkin madde 1 Miktar Tayini’)."
         ))
 
         # Ana tablo
@@ -149,6 +158,7 @@ class SpekModulu(QWidget):
         idx = self.cmb_form.findData(self.kart.urun_formu)
         if idx >= 0:
             self.cmb_form.setCurrentIndex(idx)
+        self.chk_turet.setChecked(getattr(self.kart, "otomatik_turet", True))
         self.chk_t89.setChecked(self.kart.tablo89_ekle)
         self.in_t8.setText(self.kart.serbest_birakma_tolerans)
         self.in_t9.setText(self.kart.raf_omru_tolerans)

@@ -96,6 +96,65 @@ def _seri_nolar(proje: ProjeVerisi) -> list[str]:
     return out
 
 
+def _tablo_genislik_duzelt(tablo):
+    """
+    Şablonda tblW=0/auto olan tablolarda LibreOffice sütunları çökertir.
+    tblW'yi tblGrid toplamına (dxa) sabitler — fixed layout ile birlikte düzgün render.
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    tbl = tablo._tbl
+    tblPr = tbl.tblPr
+    grid = tbl.find(qn('w:tblGrid'))
+    if grid is None:
+        return
+    toplam = sum(int(gc.get(qn('w:w'))) for gc in grid.findall(qn('w:gridCol'))
+                 if gc.get(qn('w:w')))
+    if not toplam:
+        return
+    tblW = tblPr.find(qn('w:tblW'))
+    if tblW is None:
+        tblW = OxmlElement('w:tblW'); tblPr.append(tblW)
+    tblW.set(qn('w:w'), str(toplam)); tblW.set(qn('w:type'), 'dxa')
+
+
+def _tablo_render_duzelt(tablo):
+    """
+    LibreOffice PDF render'ında çok satırlı tabloların sütun çökmesini önler:
+    fixed layout + her hücreye tblGrid'den gelen sabit genişlik uygular.
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    tbl = tablo._tbl
+    tblPr = tbl.tblPr
+    layout = tblPr.find(qn('w:tblLayout'))
+    if layout is None:
+        layout = OxmlElement('w:tblLayout'); tblPr.append(layout)
+    layout.set(qn('w:type'), 'fixed')
+    grid = tbl.find(qn('w:tblGrid'))
+    if grid is None:
+        return
+    genislikler = [int(gc.get(qn('w:w'))) for gc in grid.findall(qn('w:gridCol'))
+                   if gc.get(qn('w:w'))]
+    if not genislikler:
+        return
+    toplam = sum(genislikler)
+    tblW = tblPr.find(qn('w:tblW'))
+    if tblW is None:
+        tblW = OxmlElement('w:tblW'); tblPr.append(tblW)
+    tblW.set(qn('w:w'), str(toplam)); tblW.set(qn('w:type'), 'dxa')
+    # her hücreye sabit genişlik
+    for row in tablo.rows:
+        for ci, cell in enumerate(row.cells):
+            if ci >= len(genislikler):
+                break
+            tcPr = cell._tc.get_or_add_tcPr()
+            tcW = tcPr.find(qn('w:tcW'))
+            if tcW is None:
+                tcW = OxmlElement('w:tcW'); tcPr.append(tcW)
+            tcW.set(qn('w:w'), str(genislikler[ci])); tcW.set(qn('w:type'), 'dxa')
+
+
 def _veri_satirlarini_ayarla(tablo, baslik_satir_sayisi: int, gereken_veri_satiri: int):
     """
     Tablodaki veri satırı sayısını 'gereken'e eşitler:
@@ -115,6 +174,35 @@ def _veri_satirlarini_ayarla(tablo, baslik_satir_sayisi: int, gereken_veri_satir
         satiri_bosalt(yeni)
         mevcut_veri += 1
     return list(range(baslik_satir_sayisi, baslik_satir_sayisi + gereken_veri_satiri))
+
+
+def _tablo_sabit_layout(tablo):
+    """
+    Tabloya sabit (fixed) layout ve tablo genişliği uygular; LibreOffice'in
+    çok satırlı tablolarda sütunları çökertmesini önler.
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    tbl = tablo._tbl
+    tblPr = tbl.tblPr
+    # tblLayout = fixed
+    mevcut = tblPr.find(qn('w:tblLayout'))
+    if mevcut is None:
+        layout = OxmlElement('w:tblLayout')
+        layout.set(qn('w:type'), 'fixed')
+        tblPr.append(layout)
+    else:
+        mevcut.set(qn('w:type'), 'fixed')
+    # tblW = grid toplamı (dxa)
+    grid = tbl.find(qn('w:tblGrid'))
+    if grid is not None:
+        toplam = sum(int(gc.get(qn('w:w'))) for gc in grid.findall(qn('w:gridCol'))
+                     if gc.get(qn('w:w')))
+        tblW = tblPr.find(qn('w:tblW'))
+        if tblW is None:
+            tblW = OxmlElement('w:tblW'); tblPr.append(tblW)
+        tblW.set(qn('w:w'), str(toplam))
+        tblW.set(qn('w:type'), 'dxa')
 
 
 # ============================================================================
@@ -219,6 +307,54 @@ def _doldur_numune(doc, proje: ProjeVerisi) -> None:
 
 
 def _doldur_spek(doc, proje: ProjeVerisi) -> None:
+    """
+    Tablo 6 — spesifikasyon. Türetilmiş test listesi tek geçişte yazılır.
+    Her satırda Op No + Operasyon dolu (alt satırlar dahil). İlgili Bileşikler
+    grup başlığı + impurite satırları test listesinde sırayla gelir.
+    """
+    t = _tablo_basliga_gore(doc, 6)
+    kart = proje.spek_karti
+    if t is None or not kart.testler:
+        return
+
+    # Satır planı: (op_no, op, ad, spek, alt_satirlar)
+    plan = []  # her eleman: (opno, op, ad, spek)
+    for test in kart.testler:
+        opno = str(test.operasyon_no or "")
+        op = test.operasyon
+        yildiz = "*" if test.yildizli else ""
+        ad = test.ad + yildiz
+        # ekstra alt satırlar (mikrobiyolojik 3 alt, ağırlık tekdüzeliği 2 alt)
+        ekstra = list(test.alt_satirlar)
+        if test.aciklama_etiketi:
+            ekstra.append((test.aciklama_etiketi, test.aciklama_spek))
+        if test.aciklama2_etiketi:
+            ekstra.append((test.aciklama2_etiketi, test.aciklama2_spek))
+        if ekstra:
+            # başlık satırı (spek boş), sonra alt satırlar
+            plan.append((opno, op, ad, ""))
+            for et, sp in ekstra:
+                plan.append((opno, op, et, sp))
+        else:
+            # grup başlığı testinin spek'i boş olmalı (İlgili Bileşikler başlığı)
+            if getattr(test, "_grup_baslik", False):
+                plan.append((opno, op, ad, ""))
+            elif getattr(test, "_impurite", False):
+                plan.append((opno, op, ad, test.spesifikasyon.spesifikasyon_metni or ""))
+            else:
+                plan.append((opno, op, ad, test.spesifikasyon.metni_olustur()))
+
+    idxler = _veri_satirlarini_ayarla(t, 1, len(plan))
+    for ri, (opno, op, ad, spek) in zip(idxler, plan):
+        cells = t.rows[ri].cells
+        hucre_yaz(cells[0], opno)
+        hucre_yaz(cells[1], op)
+        hucre_yaz(cells[2], ad)
+        hucre_yaz(cells[3], spek)
+    return
+
+
+def _doldur_spek_ESKI(doc, proje: ProjeVerisi) -> None:
     """Tablo 6 — spesifikasyon. Yıldız test adının SONUNA; alt satırlar ayrı satır.
     İlgili Bileşikler etkin madde başına GRUPLU eklenir (operasyon hücresi dikey birleşik)."""
     t = _tablo_basliga_gore(doc, 6)  # Tablo 6
@@ -396,7 +532,7 @@ def _yaz_bos(cell, metin, bold=False):
     p = cell.paragraphs[0]
     r = p.add_run(_bicimle(metin))
     r.bold = bold
-    r.font.size = Pt(9)
+    r.font.size = Pt(12)
     r.font.name = "Times New Roman"
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
@@ -406,7 +542,7 @@ def _yaz_sol(cell, metin, bold=False):
     p = cell.paragraphs[0]
     r = p.add_run(str(metin))
     r.bold = bold
-    r.font.size = Pt(9)
+    r.font.size = Pt(12)
     r.font.name = "Times New Roman"
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
 

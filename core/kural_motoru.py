@@ -102,21 +102,28 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
                 out.append(it)
         return out
 
-    def agirlik_kopya(op):
+    def agirlik_kopya(op, tablet_alt=None):
+        # tablet_alt verilirse (Tablet Baskı), alt satır spek'leri override edilir
+        as1 = (agirlik_tek.aciklama_spek if agirlik_tek else "")
+        as2 = (agirlik_tek.aciklama2_spek if agirlik_tek else "")
+        if tablet_alt:
+            as1 = tablet_alt.get("sapabilir", as1)
+            as2 = tablet_alt.get("sapmamali", as2)
         return _yeni("Ağırlık Tekdüzeliği", op, TabloTipi.AGIRLIK_TEKDUZELIGI,
                      kaynak_spek=(agirlik_tek.spesifikasyon if agirlik_tek else None), ipk=True,
-                     ac1=(agirlik_tek.aciklama_etiketi if agirlik_tek else ""),
-                     as1=(agirlik_tek.aciklama_spek if agirlik_tek else ""),
-                     ac2=(agirlik_tek.aciklama2_etiketi if agirlik_tek else ""),
-                     as2=(agirlik_tek.aciklama2_spek if agirlik_tek else ""))
+                     ac1=(agirlik_tek.aciklama_etiketi if agirlik_tek else "—20 tablette tek tek tabletlerden maksimum 2 tanesi bu limitten sapabilir."),
+                     as1=as1,
+                     ac2=(agirlik_tek.aciklama2_etiketi if agirlik_tek else "—Hiçbir tablet bu limitten sapmamalıdır."),
+                     as2=as2)
 
     # ===================== KARIŞIM (Op 2) =====================
     if "Karıştırma" in operasyonlar:
         gor_kar = tablet_ipk.get("Görünüş_Karışım", "")
         if cift_katman:
             for em in etkenler:
+                gor_em = tablet_ipk.get(f"Görünüş_Karışım::{em}", gor_kar)
                 cikti.append(_yeni(f"{em} Görünüş", "Karıştırma", TabloTipi.TEK_SONUC,
-                                   gor_kar, ipk=True))
+                                   gor_em, ipk=True))
                 cikti.append(_yeni(f"{em} Karışım Tekdüzeliği", "Karıştırma",
                                    TabloTipi.ON_NUMUNE, SABIT_KARISIM_SPEK, yildiz=True))
                 cikti.append(_yeni(f"{em} Elek Testi", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
@@ -136,7 +143,14 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
             cikti.append(_yeni(f"{em} Miktar Tayini", "Karıştırma", TabloTipi.IKI_NUMUNE,
                                kaynak_spek=(mik.spesifikasyon if mik else None)))
         cikti += ilgili_bilesikler("Karıştırma", yildiz=True)
-        cikti.append(mikro_kopya("Karıştırma", yildiz=True))
+        # Çift katman: her etken için ayrı mikrobiyoloji (ikisi de *); tek katman: 1
+        if cift_katman:
+            for em in etkenler:
+                mk = mikro_kopya("Karıştırma", yildiz=True)
+                mk.ad = f"{em} Mikrobiyolojik Kontrol"
+                cikti.append(mk)
+        else:
+            cikti.append(mikro_kopya("Karıştırma", yildiz=True))
 
     # ===================== TABLET BASKI (Op 3) =====================
     if "Tablet Baskı" in operasyonlar:
@@ -144,7 +158,10 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
                            tablet_ipk.get("Görünüş_Tablet", ""), ipk=True))
         cikti.append(_yeni("Ortalama Ağırlık", "Tablet Baskı", TabloTipi.BOS_NOKTA,
                            tablet_ipk.get("Ortalama Ağırlık_Tablet", ""), ipk=True))
-        cikti.append(agirlik_kopya("Tablet Baskı"))
+        cikti.append(agirlik_kopya("Tablet Baskı", tablet_alt={
+            "sapabilir": tablet_ipk.get("Ağırlık Tek Sapabilir", agirlik_tek.aciklama_spek if agirlik_tek else ""),
+            "sapmamali": tablet_ipk.get("Ağırlık Tek Sapmamalı", agirlik_tek.aciklama2_spek if agirlik_tek else ""),
+        }))
         cikti.append(_yeni("Kalınlık", "Tablet Baskı", TabloTipi.BOS_NOKTA,
                            tablet_ipk.get("Kalınlık", ""), ipk=True))
         cikti.append(_yeni("Çap", "Tablet Baskı", TabloTipi.BOS_NOKTA,

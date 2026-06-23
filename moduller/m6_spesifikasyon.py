@@ -338,10 +338,18 @@ class SpekModulu(QWidget):
         dlg.setMinimumWidth(560)
         izg = QGridLayout(dlg)
         alanlar = {}
-        sorular = [
-            ("Görünüş_Karışım", "Görünüş (Karışım):", "örn. Beyaz renkli toz"),
+        etkenler = [em.ad for em in self.kart.etkin_maddeler] or ["Etkin madde 1"]
+        sorular = []
+        if getattr(self.kart, "cift_katman", False):
+            for em in etkenler:
+                sorular.append((f"Görünüş_Karışım::{em}", f"Görünüş ({em}, Karışım):", "örn. Beyaz renkli toz"))
+        else:
+            sorular.append(("Görünüş_Karışım", "Görünüş (Karışım):", "örn. Beyaz renkli toz"))
+        sorular += [
             ("Görünüş_Tablet", "Görünüş (Tablet Baskı):", "örn. Beyaz ve kırmızı iki katmanlı tablet"),
             ("Ortalama Ağırlık_Tablet", "Ortalama Ağırlık (Tablet Baskı):", "örn. 285.00 mg ±%5 (270.75 – 299.25 mg)"),
+            ("Ağırlık Tek Sapabilir", "Ağırlık Tek. — 'sapabilir' (Tablet):", "örn. ≤ 270.75 veya ≥ 299.25 mg"),
+            ("Ağırlık Tek Sapmamalı", "Ağırlık Tek. — 'sapmamalıdır' (Tablet):", "örn. ≤ 256.50 veya ≥ 313.50 mg"),
             ("Kalınlık", "Kalınlık:", "örn. 4.75 mm (4.45 – 5.05 mm)"),
             ("Çap", "Çap:", "örn. 12.20 mm (11.90 – 12.50 mm)"),
             ("Sertlik", "Sertlik:", "örn. Minimum 3 kP"),

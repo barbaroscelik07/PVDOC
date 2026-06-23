@@ -94,7 +94,7 @@ def hucre_yaz(cell, metin: str, bold: bool | None = None) -> None:
     else:
         r = p.add_run(str(metin))
         r.font.name = "Times New Roman"
-        r.font.size = _Pt(9)
+        r.font.size = _Pt(12)
         if bold is not None:
             r.bold = bold
 

@@ -120,13 +120,17 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
     if "Karıştırma" in operasyonlar:
         gor_kar = tablet_ipk.get("Görünüş_Karışım", "")
         if cift_katman:
+            # Test bazında gruplu: önce tüm Görünüşler, sonra tüm Karışım Tek., vb.
             for em in etkenler:
                 gor_em = tablet_ipk.get(f"Görünüş_Karışım::{em}", gor_kar)
                 cikti.append(_yeni(f"{em} Görünüş", "Karıştırma", TabloTipi.TEK_SONUC,
                                    gor_em, ipk=True))
+            for em in etkenler:
                 cikti.append(_yeni(f"{em} Karışım Tekdüzeliği", "Karıştırma",
                                    TabloTipi.ON_NUMUNE, SABIT_KARISIM_SPEK, yildiz=True))
+            for em in etkenler:
                 cikti.append(_yeni(f"{em} Elek Testi", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
+            for em in etkenler:
                 cikti.append(_yeni(f"{em} Bulk ve Tap Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
         else:
             cikti.append(_yeni("Görünüş", "Karıştırma", TabloTipi.TEK_SONUC, gor_kar, ipk=True))

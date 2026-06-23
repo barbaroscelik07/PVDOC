@@ -331,30 +331,36 @@ class SpekModulu(QWidget):
             "Tablet IPK değerlerini (Kalınlık/Çap/Sertlik/Aşınma) girin.")
 
     def _tablet_ipk_gir(self) -> None:
-        """Tablo 8'de olmayan tablet IPK spesifikasyonlarını toplar."""
+        """Tablo 8'de olmayan ara-aşama spesifikasyonlarını toplar."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("Tablet IPK Spesifikasyonları")
+        dlg.setWindowTitle("Ara Aşama / Tablet IPK Spesifikasyonları")
         dlg.setStyleSheet(MODUL_STIL)
-        dlg.setMinimumWidth(460)
+        dlg.setMinimumWidth(560)
         izg = QGridLayout(dlg)
         alanlar = {}
-        for i, ad in enumerate(["Kalınlık", "Çap", "Sertlik", "Aşınma"]):
-            izg.addWidget(QLabel(ad + ":"), i, 0)
-            le = QLineEdit(self.kart.tablet_ipk.get(ad, ""))
-            le.setPlaceholderText({
-                "Kalınlık": "örn. 4.75 mm (4.45 – 5.05 mm)",
-                "Çap": "örn. 12.20 mm (11.90 – 12.50 mm)",
-                "Sertlik": "örn. Minimum 3 kP",
-                "Aşınma": "örn. Maksimum %1.0"}.get(ad, ""))
+        sorular = [
+            ("Görünüş_Karışım", "Görünüş (Karışım):", "örn. Beyaz renkli toz"),
+            ("Görünüş_Tablet", "Görünüş (Tablet Baskı):", "örn. Beyaz ve kırmızı iki katmanlı tablet"),
+            ("Ortalama Ağırlık_Tablet", "Ortalama Ağırlık (Tablet Baskı):", "örn. 285.00 mg ±%5 (270.75 – 299.25 mg)"),
+            ("Kalınlık", "Kalınlık:", "örn. 4.75 mm (4.45 – 5.05 mm)"),
+            ("Çap", "Çap:", "örn. 12.20 mm (11.90 – 12.50 mm)"),
+            ("Sertlik", "Sertlik:", "örn. Minimum 3 kP"),
+        ]
+        for i, (anahtar, etiket, ph) in enumerate(sorular):
+            izg.addWidget(QLabel(etiket), i, 0)
+            le = QLineEdit(self.kart.tablet_ipk.get(anahtar, ""))
+            le.setPlaceholderText(ph)
             izg.addWidget(le, i, 1)
-            alanlar[ad] = le
+            alanlar[anahtar] = le
+        not_lbl = ipucu_etiketi("Aşınma her zaman ‘Maksimum %1.0’, Tablet Dağılma ‘Maksimum 15 dakika’ (sabit).")
+        izg.addWidget(not_lbl, len(sorular), 0, 1, 2)
         btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btn.accepted.connect(dlg.accept); btn.rejected.connect(dlg.reject)
-        izg.addWidget(btn, 4, 0, 1, 2)
+        izg.addWidget(btn, len(sorular) + 1, 0, 1, 2)
         if dlg.exec():
-            for ad, le in alanlar.items():
-                self.kart.tablet_ipk[ad] = le.text().strip()
-            QMessageBox.information(self, "Tablet IPK", "Değerler kaydedildi.")
+            for anahtar, le in alanlar.items():
+                self.kart.tablet_ipk[anahtar] = le.text().strip()
+            QMessageBox.information(self, "Spesifikasyonlar", "Değerler kaydedildi.")
 
     def _aktif_operasyonlar(self) -> list[str]:
         f = self.cmb_form.currentData()

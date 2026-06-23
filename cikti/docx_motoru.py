@@ -312,25 +312,37 @@ def _doldur_spek(doc, proje: ProjeVerisi) -> None:
 
 
 def _doldur_ipk(doc, proje: ProjeVerisi) -> None:
-    """Tablo 7 — sadece IPK testleri (2 sütun: TESTLER | SPESİFİKASYONLAR)."""
+    """Tablo 7 — sadece IPK testleri. Ağırlık Tekdüzeliği başlık + 2 alt satır."""
     ipk = [t for t in proje.spek_karti.testler if t.ipk]
     t = _tablo_basliga_gore(doc, 7)  # Tablo 7
     if t is None or not ipk:
         return
-    # Tablo 7 şablonda 2 sütunlu (TESTLER | SPESİFİKASYONLAR)
     sut = len(t.columns)
-    idxler = _veri_satirlarini_ayarla(t, 1, len(ipk))
-    for ri, test in zip(idxler, ipk):
+
+    # Satır planı: her test 1 satır; Ağırlık Tekdüzeliği için + alt satırlar
+    plan = []  # (op_no, op, ad, spek)
+    for test in ipk:
+        n = test.ad.lower()
+        if "ağırlık tekdüzeliği" in n or "agirlik tekduzeligi" in n:
+            plan.append((test.operasyon_no, test.operasyon, test.ad, ""))  # başlık boş
+            if test.aciklama_etiketi:
+                plan.append((test.operasyon_no, test.operasyon, test.aciklama_etiketi, test.aciklama_spek))
+            if test.aciklama2_etiketi:
+                plan.append((test.operasyon_no, test.operasyon, test.aciklama2_etiketi, test.aciklama2_spek))
+        else:
+            plan.append((test.operasyon_no, test.operasyon, test.ad, test.spesifikasyon.metni_olustur()))
+
+    idxler = _veri_satirlarini_ayarla(t, 1, len(plan))
+    for ri, (opno, op, ad, spek) in zip(idxler, plan):
         cells = t.rows[ri].cells
         if sut == 2:
-            hucre_yaz(cells[0], test.ad)
-            hucre_yaz(cells[1], test.spesifikasyon.metni_olustur())
+            hucre_yaz(cells[0], ad)
+            hucre_yaz(cells[1], spek)
         else:
-            # 4 sütunlu varyant: Op No | Operasyon | Test | Spesifikasyon
-            hucre_yaz(cells[0], str(test.operasyon_no or ""))
-            hucre_yaz(cells[1], test.operasyon)
-            hucre_yaz(cells[2], test.ad)
-            hucre_yaz(cells[3], test.spesifikasyon.metni_olustur())
+            hucre_yaz(cells[0], str(opno or ""))
+            hucre_yaz(cells[1], op)
+            hucre_yaz(cells[2], ad)
+            hucre_yaz(cells[3], spek)
 
 
 # ============================================================================
@@ -385,6 +397,7 @@ def _yaz_bos(cell, metin, bold=False):
     r = p.add_run(_bicimle(metin))
     r.bold = bold
     r.font.size = Pt(9)
+    r.font.name = "Times New Roman"
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
@@ -394,6 +407,7 @@ def _yaz_sol(cell, metin, bold=False):
     r = p.add_run(str(metin))
     r.bold = bold
     r.font.size = Pt(9)
+    r.font.name = "Times New Roman"
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
 

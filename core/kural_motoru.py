@@ -1,24 +1,26 @@
 """
-Kural motoru v2 — Tablo 8'den Tablo 6/7/9 türetir.
+Kural motoru v3 — Tablo 8'den Tablo 6/7/9 türetir.
 
-Girdi: bitmiş ürün testleri (Tablo 8), etkin maddeler (impurite grupları),
-       cift_katman bayrağı, tablet_ipk sözlüğü.
-Çıktı: tüm aşamalara dağıtılmış Tablo 6 test listesi.
+tablet_ipk sözlüğü kullanıcıdan gelen ara-aşama spesifikasyonları:
+  "Görünüş_Karışım", "Görünüş_Tablet", "Ortalama Ağırlık_Tablet",
+  "Kalınlık", "Çap", "Sertlik"
+Aşınma sabit "Maksimum %1.0"; Tablet Dağılma sabit "Maksimum 15 dakika".
 """
 
 from __future__ import annotations
 
 import copy
 
-from core.models import (
-    Test, Spesifikasyon, LimitTuru, TabloTipi, EtkinMadde, Impurite,
-)
+from core.models import Test, Spesifikasyon, LimitTuru, TabloTipi
 
 OP_NO = {"Karıştırma": 2, "Tablet Baskı": 3, "Film Kaplama": 4,
          "Dolum": 3, "Blisterleme": 5}
 
 SABIT_KARISIM_SPEK = "%85 – %115"
 BILGI = "Bilgi amaçlıdır."
+ASINMA_SPEK = "Maksimum %1.0"
+TABLET_DAGILMA = "Maksimum 15 dakika"
+SIZDIRMAZLIK_SPEK = "Sızdırmamalıdır."
 
 
 def _norm(s: str) -> str:
@@ -71,10 +73,10 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
     etkenler = _etken_adlari(etkin_maddeler, bitmis_testler)
     cikti = []
 
-    gorunus = _bul(bitmis_testler, "görünüş")
+    gorunus = _bul(bitmis_testler, "görünüş")          # bitmiş/film görünüş
     ort_agirlik = _bul(bitmis_testler, "ortalama ağırlık")
     agirlik_tek = _bul(bitmis_testler, "ağırlık tekdüzeliği")
-    dagilma = _bul(bitmis_testler, "dağılma")
+    dagilma = _bul(bitmis_testler, "dağılma")          # film için (30 dk)
     mikro = next((t for t in bitmis_testler if t.mikrobiyolojik), None)
 
     def mikro_kopya(op, yildiz):
@@ -100,19 +102,27 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
                 out.append(it)
         return out
 
-    # KARIŞIM
+    def agirlik_kopya(op):
+        return _yeni("Ağırlık Tekdüzeliği", op, TabloTipi.AGIRLIK_TEKDUZELIGI,
+                     kaynak_spek=(agirlik_tek.spesifikasyon if agirlik_tek else None), ipk=True,
+                     ac1=(agirlik_tek.aciklama_etiketi if agirlik_tek else ""),
+                     as1=(agirlik_tek.aciklama_spek if agirlik_tek else ""),
+                     ac2=(agirlik_tek.aciklama2_etiketi if agirlik_tek else ""),
+                     as2=(agirlik_tek.aciklama2_spek if agirlik_tek else ""))
+
+    # ===================== KARIŞIM (Op 2) =====================
     if "Karıştırma" in operasyonlar:
+        gor_kar = tablet_ipk.get("Görünüş_Karışım", "")
         if cift_katman:
             for em in etkenler:
                 cikti.append(_yeni(f"{em} Görünüş", "Karıştırma", TabloTipi.TEK_SONUC,
-                                   kaynak_spek=(gorunus.spesifikasyon if gorunus else None), yildiz=True))
+                                   gor_kar, ipk=True))
                 cikti.append(_yeni(f"{em} Karışım Tekdüzeliği", "Karıştırma",
                                    TabloTipi.ON_NUMUNE, SABIT_KARISIM_SPEK, yildiz=True))
                 cikti.append(_yeni(f"{em} Elek Testi", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
                 cikti.append(_yeni(f"{em} Bulk ve Tap Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
         else:
-            cikti.append(_yeni("Görünüş", "Karıştırma", TabloTipi.TEK_SONUC,
-                               kaynak_spek=(gorunus.spesifikasyon if gorunus else None), yildiz=True))
+            cikti.append(_yeni("Görünüş", "Karıştırma", TabloTipi.TEK_SONUC, gor_kar, ipk=True))
             cikti.append(_yeni("Elek Testi", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
             cikti.append(_yeni("Bulk ve Tap Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
             for em in etkenler:
@@ -128,25 +138,21 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
         cikti += ilgili_bilesikler("Karıştırma", yildiz=True)
         cikti.append(mikro_kopya("Karıştırma", yildiz=True))
 
-    # TABLET BASKI
+    # ===================== TABLET BASKI (Op 3) =====================
     if "Tablet Baskı" in operasyonlar:
         cikti.append(_yeni("Görünüş", "Tablet Baskı", TabloTipi.TEK_SONUC,
-                           kaynak_spek=(gorunus.spesifikasyon if gorunus else None), ipk=True))
-        if ort_agirlik:
-            cikti.append(_yeni("Ortalama Ağırlık", "Tablet Baskı", TabloTipi.BOS_NOKTA,
-                               kaynak_spek=ort_agirlik.spesifikasyon, ipk=True))
-        if agirlik_tek:
-            cikti.append(_yeni("Ağırlık Tekdüzeliği", "Tablet Baskı", TabloTipi.AGIRLIK_TEKDUZELIGI,
-                               kaynak_spek=agirlik_tek.spesifikasyon, ipk=True,
-                               ac1=agirlik_tek.aciklama_etiketi, as1=agirlik_tek.aciklama_spek,
-                               ac2=agirlik_tek.aciklama2_etiketi, as2=agirlik_tek.aciklama2_spek))
-        for ad in ["Kalınlık", "Çap", "Sertlik", "Aşınma"]:
-            spek = tablet_ipk.get(ad, "")
-            tip = TabloTipi.TEK_SONUC if ad in ("Sertlik", "Aşınma") else TabloTipi.BOS_NOKTA
-            cikti.append(_yeni(ad, "Tablet Baskı", tip, spek, ipk=True))
-        if dagilma:
-            cikti.append(_yeni("Dağılma", "Tablet Baskı", TabloTipi.BOS_NOKTA,
-                               kaynak_spek=dagilma.spesifikasyon, ipk=True))
+                           tablet_ipk.get("Görünüş_Tablet", ""), ipk=True))
+        cikti.append(_yeni("Ortalama Ağırlık", "Tablet Baskı", TabloTipi.BOS_NOKTA,
+                           tablet_ipk.get("Ortalama Ağırlık_Tablet", ""), ipk=True))
+        cikti.append(agirlik_kopya("Tablet Baskı"))
+        cikti.append(_yeni("Kalınlık", "Tablet Baskı", TabloTipi.BOS_NOKTA,
+                           tablet_ipk.get("Kalınlık", ""), ipk=True))
+        cikti.append(_yeni("Çap", "Tablet Baskı", TabloTipi.BOS_NOKTA,
+                           tablet_ipk.get("Çap", ""), ipk=True))
+        cikti.append(_yeni("Sertlik", "Tablet Baskı", TabloTipi.TEK_SONUC,
+                           tablet_ipk.get("Sertlik", ""), ipk=True))
+        cikti.append(_yeni("Aşınma", "Tablet Baskı", TabloTipi.TEK_SONUC, ASINMA_SPEK, ipk=True))
+        cikti.append(_yeni("Dağılma", "Tablet Baskı", TabloTipi.BOS_NOKTA, TABLET_DAGILMA, ipk=True))
         for em in etkenler:
             tes = _bul(bitmis_testler, "teşhis", etken=em)
             cikti.append(_yeni(f"{em} Teşhis", "Tablet Baskı", TabloTipi.TEK_SONUC,
@@ -161,21 +167,17 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
         cikti += ilgili_bilesikler("Tablet Baskı", yildiz=True)
         cikti.append(mikro_kopya("Tablet Baskı", yildiz=True))
 
-    # FİLM KAPLAMA
+    # ===================== FİLM KAPLAMA (Op 4) =====================
     if "Film Kaplama" in operasyonlar:
         cikti.append(_yeni("Görünüş", "Film Kaplama", TabloTipi.TEK_SONUC,
                            kaynak_spek=(gorunus.spesifikasyon if gorunus else None), ipk=True))
         if ort_agirlik:
             cikti.append(_yeni("Ortalama Ağırlık", "Film Kaplama", TabloTipi.BOS_NOKTA,
                                kaynak_spek=ort_agirlik.spesifikasyon, ipk=True))
-        if agirlik_tek:
-            cikti.append(_yeni("Ağırlık Tekdüzeliği", "Film Kaplama", TabloTipi.AGIRLIK_TEKDUZELIGI,
-                               kaynak_spek=agirlik_tek.spesifikasyon, ipk=True,
-                               ac1=agirlik_tek.aciklama_etiketi, as1=agirlik_tek.aciklama_spek,
-                               ac2=agirlik_tek.aciklama2_etiketi, as2=agirlik_tek.aciklama2_spek))
+        cikti.append(agirlik_kopya("Film Kaplama"))
         if dagilma:
             cikti.append(_yeni("Dağılma", "Film Kaplama", TabloTipi.BOS_NOKTA,
-                               kaynak_spek=dagilma.spesifikasyon))
+                               kaynak_spek=dagilma.spesifikasyon, ipk=True))
         for em in etkenler:
             tes = _bul(bitmis_testler, "teşhis", etken=em)
             cikti.append(_yeni(f"{em} Teşhis", "Film Kaplama", TabloTipi.TEK_SONUC,
@@ -187,17 +189,17 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
             if dis:
                 cikti.append(_yeni(f"{em} Dissolüsyon (Q)", "Film Kaplama", TabloTipi.BOS_NOKTA,
                                    kaynak_spek=dis.spesifikasyon))
-        cikti += ilgili_bilesikler("Film Kaplama", yildiz=False)
+        cikti += ilgili_bilesikler("Film Kaplama", yildiz=False)  # film'de * YOK
         cikti.append(mikro_kopya("Film Kaplama", yildiz=True))
 
-    # BLİSTERLEME
+    # ===================== BLİSTERLEME (Op 5) =====================
     if "Blisterleme" in operasyonlar:
-        cikti.append(_yeni("Sızdırmazlık", "Blisterleme", TabloTipi.TEK_SONUC, "Sızdırmamalı."))
-        cikti.append(mikro_kopya("Blisterleme", yildiz=False))
+        cikti.append(_yeni("Sızdırmazlık", "Blisterleme", TabloTipi.TEK_SONUC,
+                           SIZDIRMAZLIK_SPEK, ipk=True))
+        cikti.append(mikro_kopya("Blisterleme", yildiz=False))  # blisterlemede * YOK
 
     return cikti
 
 
-# Geriye dönük uyumluluk (eski isim)
 def testleri_turet(bitmis_testler, operasyonlar, etkin_maddeler):
     return turet(bitmis_testler, etkin_maddeler, operasyonlar)

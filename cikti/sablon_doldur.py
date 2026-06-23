@@ -76,10 +76,10 @@ def hucre_yaz(cell, metin: str, bold: bool | None = None) -> None:
     """
     Hücreye metin yazar; ilk run'ın biçimini (font) korur, kalan run'ları VE
     fazla paragrafları siler (eski şablon içeriği kalmaz).
-    bold None ise mevcut bold durumu korunur.
+    bold None ise mevcut bold durumu korunur. Yeni run Times New Roman olur.
     """
+    from docx.shared import Pt as _Pt
     p = cell.paragraphs[0]
-    # İlk paragraf dışındaki tüm paragrafları kaldır (eski içerik temizliği)
     for ekstra in cell.paragraphs[1:]:
         ekstra._p.getparent().remove(ekstra._p)
     if p.runs:
@@ -88,8 +88,13 @@ def hucre_yaz(cell, metin: str, bold: bool | None = None) -> None:
             p.runs[0].bold = bold
         for r in p.runs[1:]:
             r.text = ""
+        # font yine de Times New Roman'a sabitle (Calibri kaçaklarını önle)
+        if not p.runs[0].font.name:
+            p.runs[0].font.name = "Times New Roman"
     else:
         r = p.add_run(str(metin))
+        r.font.name = "Times New Roman"
+        r.font.size = _Pt(9)
         if bold is not None:
             r.bold = bold
 

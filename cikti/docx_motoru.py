@@ -982,10 +982,12 @@ def _turetilmis_testlerle(proje: ProjeVerisi):
         if not getattr(kart, "otomatik_turet", False):
             yield
             return
-        from core.kural_motoru import testleri_turet
+        from core.kural_motoru import turet
         orijinal = kart.testler
         ops = proje.urun_formu.operasyonlar
-        kart.testler = testleri_turet(orijinal, ops, kart.etkin_maddeler)
+        kart.testler = turet(orijinal, kart.etkin_maddeler, ops,
+                             cift_katman=getattr(kart, "cift_katman", False),
+                             tablet_ipk=getattr(kart, "tablet_ipk", {}))
         try:
             yield
         finally:

@@ -314,6 +314,14 @@ class SpekKarti:
     # tüm aşamalara dağıtılır (Tablo 6/7/9 otomatik türetilir).
     otomatik_turet: bool = True
 
+    # Çift katmanlı tablet mi? Çift ise Karışım'da Görünüş/Elek/Bulk-Tap her etken
+    # için ayrı; tek katmanda bunlar birleşik (tek satır).
+    cift_katman: bool = False
+
+    # Tablet-only IPK spesifikasyonları (Tablo 8'de YOK, Tablo 6 Tablet'te VAR).
+    # Kullanıcı girer; örn. {"Kalınlık": "4.75 mm (4.45 – 5.05 mm)", ...}
+    tablet_ipk: dict = field(default_factory=dict)
+
     # Eski alanlar (manuel/kopyala-yapıştır) — ileride kullanılabilir
     serbest_birakma: list[dict[str, str]] = field(default_factory=list)
     raf_omru: list[dict[str, str]] = field(default_factory=list)

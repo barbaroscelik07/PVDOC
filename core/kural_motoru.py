@@ -1,32 +1,24 @@
 """
-Kural motoru — Bitmiş ürün spesifikasyonlarından (Tablo 8) Tablo 6/7/9 türetir.
+Kural motoru v2 — Tablo 8'den Tablo 6/7/9 türetir.
 
-Kullanıcı kararı: Sadece Tablo 8 (bitmiş ürün serbest bırakma) girilir; program
-ürün formuna gömülü kurallarla testleri aşamalara dağıtır, yıldız/IPK atar.
-
-FİLM TABLET test haritası (kullanıcı onaylı):
-  Görünüş             : Karışım, Tablet Baskı, Film Kaplama (ayrı) — IPK
-  Elek Testi          : Karışım — *
-  Karışım Tekdüzeliği : Karışım (spek sabit %85–115) — *
-  Ortalama Ağırlık    : Tablet Baskı, Film Kaplama (ayrı) — IPK
-  Ağırlık Tekdüzeliği : Tablet Baskı, Film Kaplama (ayrı) — IPK
-  Sertlik/Kalınlık/Çap/Aşınma/Dağılma : Tablet Baskı — IPK
-  Teşhis              : tüm aşamalar
-  Miktar Tayini       : tüm aşamalar
-  Dissolüsyon         : Tablet Baskı, Film Kaplama
-  İlgili Bileşikler   : tüm aşamalar (Film Kaplama'da * yok, diğerlerinde *)
-  Mikrobiyolojik      : tüm aşamalar + Blisterleme (Blisterleme'de * yok)
+Girdi: bitmiş ürün testleri (Tablo 8), etkin maddeler (impurite grupları),
+       cift_katman bayrağı, tablet_ipk sözlüğü.
+Çıktı: tüm aşamalara dağıtılmış Tablo 6 test listesi.
 """
 
 from __future__ import annotations
+
+import copy
 
 from core.models import (
     Test, Spesifikasyon, LimitTuru, TabloTipi, EtkinMadde, Impurite,
 )
 
-# Operasyon adı → numara
 OP_NO = {"Karıştırma": 2, "Tablet Baskı": 3, "Film Kaplama": 4,
          "Dolum": 3, "Blisterleme": 5}
+
+SABIT_KARISIM_SPEK = "%85 – %115"
+BILGI = "Bilgi amaçlıdır."
 
 
 def _norm(s: str) -> str:
@@ -35,116 +27,177 @@ def _norm(s: str) -> str:
     return (s or "").translate(tr).lower().strip()
 
 
-# Test anahtar kelimesi → kural
-#   asamalar: bu testin görüneceği operasyonlar (None = forma göre tümü)
-#   ipk: Tablo 7'ye de girer mi
-#   yildiz_haric: bu operasyon(lar)da * KONMAZ; diğerlerinde konur
-#   yildiz_hep: her zaman * (yildiz_haric ile birlikte değerlendirilir)
-#   tip: sonuç tablosu tipi
-def _kurallar(operasyonlar: list[str]) -> dict:
-    KARISIM = "Karıştırma"
-    TABLET = "Tablet Baskı"
-    FILM = "Film Kaplama"
-    BLISTER = "Blisterleme"
-    var = lambda *adlar: [a for a in adlar if a in operasyonlar]
-
-    return {
-        "gorunus": dict(asamalar=var(KARISIM, TABLET, FILM), ipk=True, yildiz="yok",
-                        tip=TabloTipi.TEK_SONUC),
-        "elek": dict(asamalar=var(KARISIM), ipk=False, yildiz="hep",
-                     tip=TabloTipi.TEK_SONUC),
-        "karisim tekduzeligi": dict(asamalar=var(KARISIM), ipk=False, yildiz="hep",
-                                    tip=TabloTipi.ON_NUMUNE, sabit_spek="%85 – %115"),
-        "ortalama agirlik": dict(asamalar=var(TABLET, FILM), ipk=True, yildiz="yok",
-                                 tip=TabloTipi.BOS_NOKTA),
-        "agirlik tekduzeligi": dict(asamalar=var(TABLET, FILM), ipk=True, yildiz="yok",
-                                    tip=TabloTipi.AGIRLIK_TEKDUZELIGI),
-        "sertlik": dict(asamalar=var(TABLET), ipk=True, yildiz="yok", tip=TabloTipi.BOS_NOKTA),
-        "kalinlik": dict(asamalar=var(TABLET), ipk=True, yildiz="yok", tip=TabloTipi.BOS_NOKTA),
-        "cap": dict(asamalar=var(TABLET), ipk=True, yildiz="yok", tip=TabloTipi.BOS_NOKTA),
-        "asinma": dict(asamalar=var(TABLET), ipk=True, yildiz="yok", tip=TabloTipi.BOS_NOKTA),
-        "dagilma": dict(asamalar=var(TABLET), ipk=True, yildiz="yok", tip=TabloTipi.BOS_NOKTA),
-        "teshis": dict(asamalar=var(KARISIM, TABLET, FILM), ipk=False, yildiz="yok",
-                       tip=TabloTipi.TEK_SONUC),
-        "miktar tayini": dict(asamalar=var(KARISIM, TABLET, FILM), ipk=False, yildiz="yok",
-                              tip=TabloTipi.IKI_NUMUNE),
-        "dissolusyon": dict(asamalar=var(TABLET, FILM), ipk=False, yildiz="yok",
-                            tip=TabloTipi.BOS_NOKTA),
-        "ilgili bilesik": dict(asamalar=var(KARISIM, TABLET, FILM), ipk=False,
-                               yildiz="haric", yildiz_haric=[FILM], tip=TabloTipi.IKI_NUMUNE),
-        "mikrobiyolojik": dict(asamalar=var(KARISIM, TABLET, FILM, BLISTER), ipk=False,
-                               yildiz="haric", yildiz_haric=[BLISTER], tip=TabloTipi.MATRIS),
-    }
+def _etken_adlari(etkenler, testler):
+    adlar = [em.ad for em in etkenler]
+    if not adlar:
+        bulunan = []
+        for t in testler:
+            if _norm(t.ad).startswith("etkin madde"):
+                parca = t.ad.split()
+                if len(parca) >= 3:
+                    ad = " ".join(parca[:3])
+                    if ad not in bulunan:
+                        bulunan.append(ad)
+        adlar = bulunan
+    return adlar or ["Etkin madde 1"]
 
 
-def _kural_bul(ad: str, kurallar: dict):
-    n = _norm(ad)
-    # en spesifik eşleşmeler önce
-    sirali = ["agirlik tekduzeligi", "karisim tekduzeligi", "ortalama agirlik",
-              "ilgili bilesik", "miktar tayini", "mikrobiyolojik", "dissolusyon",
-              "gorunus", "teshis", "elek", "sertlik", "kalinlik", "cap", "asinma", "dagilma"]
-    for anahtar in sirali:
-        if anahtar in n:
-            return kurallar.get(anahtar)
+def _bul(testler, *anahtarlar, etken=None):
+    for t in testler:
+        n = _norm(t.ad)
+        if all(_norm(a) in n for a in anahtarlar):
+            if etken is None or _norm(etken) in n:
+                return t
     return None
 
 
-def _yildiz_belirle(kural: dict, operasyon: str) -> bool:
-    mod = kural.get("yildiz", "yok")
-    if mod == "hep":
-        return True
-    if mod == "yok":
-        return False
-    if mod == "haric":
-        return operasyon not in kural.get("yildiz_haric", [])
-    return False
+def _yeni(ad, op, tip, spek_metni="", *, ipk=False, yildiz=False,
+          mikro=False, alt_satirlar=None, kaynak_spek=None,
+          ac1="", as1="", ac2="", as2=""):
+    if kaynak_spek is not None:
+        sp = copy.deepcopy(kaynak_spek)
+    else:
+        sp = Spesifikasyon(limit_turu=LimitTuru.ARALIK, spesifikasyon_metni=spek_metni)
+    return Test(ad=ad, operasyon=op, operasyon_no=OP_NO.get(op, 0),
+                tablo_tipi=tip, ipk=ipk, yildizli=yildiz, mikrobiyolojik=mikro,
+                spesifikasyon=sp, alt_satirlar=list(alt_satirlar or []),
+                aciklama_etiketi=ac1, aciklama_spek=as1,
+                aciklama2_etiketi=ac2, aciklama2_spek=as2)
 
 
-def testleri_turet(bitmis_testler: list[Test], operasyonlar: list[str],
-                   etkin_maddeler: list[EtkinMadde]) -> list[Test]:
-    """
-    Bitmiş ürün test listesinden (Tablo 8) tüm aşamalara dağıtılmış Tablo 6
-    test listesini üretir. Her test, kuralına göre ilgili operasyonlara kopyalanır;
-    yıldız/IPK/tip otomatik atanır.
-    """
-    kurallar = _kurallar(operasyonlar)
-    uretilen: list[Test] = []
+def turet(bitmis_testler, etkin_maddeler, operasyonlar,
+          cift_katman=False, tablet_ipk=None):
+    tablet_ipk = tablet_ipk or {}
+    etkenler = _etken_adlari(etkin_maddeler, bitmis_testler)
+    cikti = []
 
-    for bt in bitmis_testler:
-        kural = _kural_bul(bt.ad, kurallar)
-        if kural is None:
-            # kuralsız test: olduğu gibi bırak (kullanıcı elle ayarlamış)
-            uretilen.append(bt)
-            continue
-        asamalar = kural["asamalar"] or operasyonlar
-        # test adından etkin madde önekini ayıkla (örn "Etkin madde 1 Görünüş")
-        for op in asamalar:
-            t = Test(
-                ad=bt.ad,
-                operasyon=op,
-                operasyon_no=OP_NO.get(op, 0),
-                tablo_tipi=kural["tip"],
-                ipk=kural["ipk"],
-                yildizli=_yildiz_belirle(kural, op),
-                spesifikasyon=_spek_kopya(bt.spesifikasyon, kural),
-                mikrobiyolojik=(kural["tip"] is TabloTipi.MATRIS),
-                alt_satirlar=list(bt.alt_satirlar),
-                aciklama_etiketi=bt.aciklama_etiketi,
-                aciklama_spek=bt.aciklama_spek,
-                aciklama2_etiketi=bt.aciklama2_etiketi,
-                aciklama2_spek=bt.aciklama2_spek,
-            )
-            uretilen.append(t)
+    gorunus = _bul(bitmis_testler, "görünüş")
+    ort_agirlik = _bul(bitmis_testler, "ortalama ağırlık")
+    agirlik_tek = _bul(bitmis_testler, "ağırlık tekdüzeliği")
+    dagilma = _bul(bitmis_testler, "dağılma")
+    mikro = next((t for t in bitmis_testler if t.mikrobiyolojik), None)
 
-    # operasyon sırasına göre sırala (sabit sonuç düzeni için)
-    uretilen.sort(key=lambda t: (t.operasyon_no or 99))
-    return uretilen
+    def mikro_kopya(op, yildiz):
+        alt = mikro.alt_satirlar if mikro else [
+            ("-Toplam Aerobik Mikroorganizma Sayısı", "≤10³ cfu/g"),
+            ("-Küf ve Maya Sayısı", "≤10² cfu/g"), ("-E. coli", "0 cfu/g")]
+        return _yeni("Mikrobiyolojik Kontrol", op, TabloTipi.MATRIS, mikro=True,
+                     yildiz=yildiz, alt_satirlar=alt,
+                     kaynak_spek=(mikro.spesifikasyon if mikro else None))
+
+    def ilgili_bilesikler(op, yildiz):
+        out = []
+        for em in etkin_maddeler:
+            if not em.impuriteler:
+                continue
+            bas = _yeni(f"{em.ad} İlgili Bileşikler", op, TabloTipi.IKI_NUMUNE, "", yildiz=yildiz)
+            bas._grup_baslik = True
+            out.append(bas)
+            for imp in em.impuriteler:
+                it = _yeni(f"—{imp.ad}", op, TabloTipi.IKI_NUMUNE, imp.limit_metni, yildiz=False)
+                it.spesifikasyon.maksimum_deger = imp.maksimum_deger
+                it._impurite = True
+                out.append(it)
+        return out
+
+    # KARIŞIM
+    if "Karıştırma" in operasyonlar:
+        if cift_katman:
+            for em in etkenler:
+                cikti.append(_yeni(f"{em} Görünüş", "Karıştırma", TabloTipi.TEK_SONUC,
+                                   kaynak_spek=(gorunus.spesifikasyon if gorunus else None), yildiz=True))
+                cikti.append(_yeni(f"{em} Karışım Tekdüzeliği", "Karıştırma",
+                                   TabloTipi.ON_NUMUNE, SABIT_KARISIM_SPEK, yildiz=True))
+                cikti.append(_yeni(f"{em} Elek Testi", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
+                cikti.append(_yeni(f"{em} Bulk ve Tap Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
+        else:
+            cikti.append(_yeni("Görünüş", "Karıştırma", TabloTipi.TEK_SONUC,
+                               kaynak_spek=(gorunus.spesifikasyon if gorunus else None), yildiz=True))
+            cikti.append(_yeni("Elek Testi", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
+            cikti.append(_yeni("Bulk ve Tap Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
+            for em in etkenler:
+                cikti.append(_yeni(f"{em} Karışım Tekdüzeliği", "Karıştırma",
+                                   TabloTipi.ON_NUMUNE, SABIT_KARISIM_SPEK, yildiz=True))
+        for em in etkenler:
+            tes = _bul(bitmis_testler, "teşhis", etken=em)
+            cikti.append(_yeni(f"{em} Teşhis", "Karıştırma", TabloTipi.TEK_SONUC,
+                               kaynak_spek=(tes.spesifikasyon if tes else None)))
+            mik = _bul(bitmis_testler, "miktar", etken=em)
+            cikti.append(_yeni(f"{em} Miktar Tayini", "Karıştırma", TabloTipi.IKI_NUMUNE,
+                               kaynak_spek=(mik.spesifikasyon if mik else None)))
+        cikti += ilgili_bilesikler("Karıştırma", yildiz=True)
+        cikti.append(mikro_kopya("Karıştırma", yildiz=True))
+
+    # TABLET BASKI
+    if "Tablet Baskı" in operasyonlar:
+        cikti.append(_yeni("Görünüş", "Tablet Baskı", TabloTipi.TEK_SONUC,
+                           kaynak_spek=(gorunus.spesifikasyon if gorunus else None), ipk=True))
+        if ort_agirlik:
+            cikti.append(_yeni("Ortalama Ağırlık", "Tablet Baskı", TabloTipi.BOS_NOKTA,
+                               kaynak_spek=ort_agirlik.spesifikasyon, ipk=True))
+        if agirlik_tek:
+            cikti.append(_yeni("Ağırlık Tekdüzeliği", "Tablet Baskı", TabloTipi.AGIRLIK_TEKDUZELIGI,
+                               kaynak_spek=agirlik_tek.spesifikasyon, ipk=True,
+                               ac1=agirlik_tek.aciklama_etiketi, as1=agirlik_tek.aciklama_spek,
+                               ac2=agirlik_tek.aciklama2_etiketi, as2=agirlik_tek.aciklama2_spek))
+        for ad in ["Kalınlık", "Çap", "Sertlik", "Aşınma"]:
+            spek = tablet_ipk.get(ad, "")
+            tip = TabloTipi.TEK_SONUC if ad in ("Sertlik", "Aşınma") else TabloTipi.BOS_NOKTA
+            cikti.append(_yeni(ad, "Tablet Baskı", tip, spek, ipk=True))
+        if dagilma:
+            cikti.append(_yeni("Dağılma", "Tablet Baskı", TabloTipi.BOS_NOKTA,
+                               kaynak_spek=dagilma.spesifikasyon, ipk=True))
+        for em in etkenler:
+            tes = _bul(bitmis_testler, "teşhis", etken=em)
+            cikti.append(_yeni(f"{em} Teşhis", "Tablet Baskı", TabloTipi.TEK_SONUC,
+                               kaynak_spek=(tes.spesifikasyon if tes else None)))
+            mik = _bul(bitmis_testler, "miktar", etken=em)
+            cikti.append(_yeni(f"{em} Miktar Tayini", "Tablet Baskı", TabloTipi.IKI_NUMUNE,
+                               kaynak_spek=(mik.spesifikasyon if mik else None)))
+            dis = _bul(bitmis_testler, "dissol", etken=em)
+            if dis:
+                cikti.append(_yeni(f"{em} Dissolüsyon (Q)", "Tablet Baskı", TabloTipi.BOS_NOKTA,
+                                   kaynak_spek=dis.spesifikasyon))
+        cikti += ilgili_bilesikler("Tablet Baskı", yildiz=True)
+        cikti.append(mikro_kopya("Tablet Baskı", yildiz=True))
+
+    # FİLM KAPLAMA
+    if "Film Kaplama" in operasyonlar:
+        cikti.append(_yeni("Görünüş", "Film Kaplama", TabloTipi.TEK_SONUC,
+                           kaynak_spek=(gorunus.spesifikasyon if gorunus else None), ipk=True))
+        if ort_agirlik:
+            cikti.append(_yeni("Ortalama Ağırlık", "Film Kaplama", TabloTipi.BOS_NOKTA,
+                               kaynak_spek=ort_agirlik.spesifikasyon, ipk=True))
+        if agirlik_tek:
+            cikti.append(_yeni("Ağırlık Tekdüzeliği", "Film Kaplama", TabloTipi.AGIRLIK_TEKDUZELIGI,
+                               kaynak_spek=agirlik_tek.spesifikasyon, ipk=True,
+                               ac1=agirlik_tek.aciklama_etiketi, as1=agirlik_tek.aciklama_spek,
+                               ac2=agirlik_tek.aciklama2_etiketi, as2=agirlik_tek.aciklama2_spek))
+        if dagilma:
+            cikti.append(_yeni("Dağılma", "Film Kaplama", TabloTipi.BOS_NOKTA,
+                               kaynak_spek=dagilma.spesifikasyon))
+        for em in etkenler:
+            tes = _bul(bitmis_testler, "teşhis", etken=em)
+            cikti.append(_yeni(f"{em} Teşhis", "Film Kaplama", TabloTipi.TEK_SONUC,
+                               kaynak_spek=(tes.spesifikasyon if tes else None)))
+            mik = _bul(bitmis_testler, "miktar", etken=em)
+            cikti.append(_yeni(f"{em} Miktar Tayini", "Film Kaplama", TabloTipi.IKI_NUMUNE,
+                               kaynak_spek=(mik.spesifikasyon if mik else None)))
+            dis = _bul(bitmis_testler, "dissol", etken=em)
+            if dis:
+                cikti.append(_yeni(f"{em} Dissolüsyon (Q)", "Film Kaplama", TabloTipi.BOS_NOKTA,
+                                   kaynak_spek=dis.spesifikasyon))
+        cikti += ilgili_bilesikler("Film Kaplama", yildiz=False)
+        cikti.append(mikro_kopya("Film Kaplama", yildiz=True))
+
+    # BLİSTERLEME
+    if "Blisterleme" in operasyonlar:
+        cikti.append(_yeni("Sızdırmazlık", "Blisterleme", TabloTipi.TEK_SONUC, "Sızdırmamalı."))
+        cikti.append(mikro_kopya("Blisterleme", yildiz=False))
+
+    return cikti
 
 
-def _spek_kopya(spek: Spesifikasyon, kural: dict) -> Spesifikasyon:
-    """Spesifikasyonu kopyalar; sabit spek kuralı varsa onu uygular."""
-    import copy
-    yeni = copy.deepcopy(spek)
-    if kural.get("sabit_spek"):
-        yeni.spesifikasyon_metni = kural["sabit_spek"]
-    return yeni
+# Geriye dönük uyumluluk (eski isim)
+def testleri_turet(bitmis_testler, operasyonlar, etkin_maddeler):
+    return turet(bitmis_testler, etkin_maddeler, operasyonlar)

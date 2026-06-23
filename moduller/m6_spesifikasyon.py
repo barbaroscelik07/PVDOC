@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QComboBox, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QInputDialog, QMessageBox, QCheckBox, QAbstractItemView,
-    QDialog, QDialogButtonBox,
+    QDialog, QDialogButtonBox, QFileDialog,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
@@ -140,6 +140,21 @@ class SpekModulu(QWidget):
         kok.addLayout(sb)
 
         # Özel test butonları
+        # Word'den Tablo 8 yükleme + katman + tablet IPK
+        word = QHBoxLayout()
+        b_word = QPushButton("📄 Word'den Tablo 8 Yükle")
+        b_word.setObjectName("birincil")
+        b_word.clicked.connect(self._word_yukle)
+        word.addWidget(b_word)
+        self.chk_cift = QCheckBox("Çift katmanlı tablet")
+        self.chk_cift.toggled.connect(lambda v: setattr(self.kart, "cift_katman", v))
+        word.addWidget(self.chk_cift)
+        b_ipk = QPushButton("Tablet IPK Değerleri (Kalınlık/Çap/Sertlik/Aşınma)")
+        b_ipk.clicked.connect(self._tablet_ipk_gir)
+        word.addWidget(b_ipk)
+        word.addStretch(1)
+        kok.addLayout(word)
+
         ozel = QHBoxLayout()
         ozel.addWidget(bolum_etiketi("Hazır Özel Testler:"))
         for metin, fn in [("+ Mikrobiyolojik", self._mikro_ekle),
@@ -149,8 +164,8 @@ class SpekModulu(QWidget):
         ozel.addStretch(1)
         kok.addLayout(ozel)
         kok.addWidget(ipucu_etiketi(
-            "İlgili Bileşikler: etkin madde + impuriteleri tek seferde ekler "
-            "(film kaplama hariç otomatik *). Mikrobiyolojik: blisterleme hariç otomatik *."
+            "Word'den Tablo 8 yükleyin → program Tablo 6/7/9'u otomatik türetir. "
+            "Çift katmanlı tablette Karışım'da Görünüş/Elek/Bulk-Tap her etken için ayrı olur."
         ))
 
         # form/tablo89 doldur
@@ -159,6 +174,7 @@ class SpekModulu(QWidget):
         if idx >= 0:
             self.cmb_form.setCurrentIndex(idx)
         self.chk_turet.setChecked(getattr(self.kart, "otomatik_turet", True))
+        self.chk_cift.setChecked(getattr(self.kart, "cift_katman", False))
         self.chk_t89.setChecked(self.kart.tablo89_ekle)
         self.in_t8.setText(self.kart.serbest_birakma_tolerans)
         self.in_t9.setText(self.kart.raf_omru_tolerans)
@@ -285,6 +301,61 @@ class SpekModulu(QWidget):
         self._tabloyu_yenile()
 
     # ----------------------------------------------------------------- özel testler
+    def _word_yukle(self) -> None:
+        """Word dosyasından Tablo 8'i okuyup bitmiş ürün testlerine yükler."""
+        yol, _ = QFileDialog.getOpenFileName(
+            self, "Tablo 8 İçeren Word Dosyası Seç", "", "Word (*.docx)")
+        if not yol:
+            return
+        try:
+            from core.tablo8_okuyucu import tablo8_coz
+            r = tablo8_coz(yol)
+        except Exception as e:
+            QMessageBox.warning(self, "Word Okuma Hatası", f"Dosya okunamadı:\n{e}")
+            return
+        if not r["bulundu"]:
+            QMessageBox.warning(self, "Tablo 8 Bulunamadı",
+                                "Word dosyasında 'Tablo 8 ... Bitmiş Ürün' tablosu bulunamadı.\n"
+                                "Tablonun 2 sütunlu (TESTLER | SPESİFİKASYONLAR) olduğundan emin olun.")
+            return
+        self.kart.testler = r["testler"]
+        self.kart.etkin_maddeler = r["etkin_maddeler"]
+        self.kart.otomatik_turet = True
+        self.chk_turet.setChecked(True)
+        self._tabloyu_yenile()
+        QMessageBox.information(
+            self, "Tablo 8 Yüklendi",
+            f"{len(r['testler'])} test ve {len(r['etkin_maddeler'])} etkin madde yüklendi.\n\n"
+            "Çıktı alırken Tablo 6/7/9 bu bilgilerden otomatik türetilecek. "
+            "Çift katmanlı tablet ise yukarıdaki kutucuğu işaretleyin ve "
+            "Tablet IPK değerlerini (Kalınlık/Çap/Sertlik/Aşınma) girin.")
+
+    def _tablet_ipk_gir(self) -> None:
+        """Tablo 8'de olmayan tablet IPK spesifikasyonlarını toplar."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Tablet IPK Spesifikasyonları")
+        dlg.setStyleSheet(MODUL_STIL)
+        dlg.setMinimumWidth(460)
+        izg = QGridLayout(dlg)
+        alanlar = {}
+        for i, ad in enumerate(["Kalınlık", "Çap", "Sertlik", "Aşınma"]):
+            izg.addWidget(QLabel(ad + ":"), i, 0)
+            le = QLineEdit(self.kart.tablet_ipk.get(ad, ""))
+            le.setPlaceholderText({
+                "Kalınlık": "örn. 4.75 mm (4.45 – 5.05 mm)",
+                "Çap": "örn. 12.20 mm (11.90 – 12.50 mm)",
+                "Sertlik": "örn. Minimum 3 kP",
+                "Aşınma": "örn. Maksimum %1.0"}.get(ad, ""))
+            izg.addWidget(le, i, 1)
+            alanlar[ad] = le
+        btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn.accepted.connect(dlg.accept); btn.rejected.connect(dlg.reject)
+        izg.addWidget(btn, 4, 0, 1, 2)
+        if dlg.exec():
+            for ad, le in alanlar.items():
+                self.kart.tablet_ipk[ad] = le.text().strip()
+            QMessageBox.information(self, "Tablet IPK", "Değerler kaydedildi.")
+
     def _aktif_operasyonlar(self) -> list[str]:
         f = self.cmb_form.currentData()
         if isinstance(f, UrunFormu):

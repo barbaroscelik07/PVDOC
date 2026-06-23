@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QCheckBox,
 )
 
 from core.models import ProjeVerisi, SERI_SAYISI
@@ -72,6 +72,18 @@ class GenelBilgiModulu(QWidget):
         self.in_form_no.textChanged.connect(lambda t: self._yaz("form_no", t))
 
         kok.addLayout(izgara)
+
+        # Çift katman seçimi (Tablo 6 türetmesini etkiler)
+        katman = QHBoxLayout()
+        katman.addWidget(QLabel("Tablet Yapısı:"))
+        self.chk_cift = QCheckBox("Çift katmanlı tablet")
+        self.chk_cift.setChecked(getattr(self.proje.spek_karti, "cift_katman", False))
+        self.chk_cift.toggled.connect(lambda v: setattr(self.proje.spek_karti, "cift_katman", v))
+        katman.addWidget(self.chk_cift)
+        katman.addWidget(ipucu_etiketi(
+            "Çift katmanda Karışım aşamasında Görünüş/Elek/Bulk-Tap her etken için ayrı olur."))
+        katman.addStretch(1)
+        kok.addLayout(katman)
         kok.addWidget(ayirici())
 
         # Tablo 2: Kapsanan ürünler / seriler (sabit 3)

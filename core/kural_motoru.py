@@ -67,8 +67,44 @@ def _yeni(ad, op, tip, spek_metni="", *, ipk=False, yildiz=False,
                 aciklama2_etiketi=ac2, aciklama2_spek=as2)
 
 
+def test_taninir_mi(ad: str) -> bool:
+    """Bu test adı film tablet kural haritasında tanınıyor mu?"""
+    n = _norm(ad)
+    anahtarlar = ["gorunus", "elek", "karisim tekduzeligi", "ortalama agirlik",
+                  "agirlik tekduzeligi", "agirlik sapmasi", "sertlik", "kalinlik",
+                  "cap", "asinma", "dagilma", "teshis", "miktar tayini",
+                  "dissol", "ilgili bilesik", "mikrobiyolojik", "sizdirmazlik"]
+    return any(a in n for a in anahtarlar)
+
+
+def taninmayan_testler(bitmis_testler) -> list:
+    """Kuralda tanınmayan testlerin adlarını döndürür (etken öneki çıkarılmış)."""
+    out = []
+    for t in bitmis_testler:
+        if not test_taninir_mi(t.ad):
+            if t.ad not in out:
+                out.append(t.ad)
+    return out
+
+
+def _ozel_kuralli_ekle(cikti, bitmis_testler, ozel_kurallar):
+    """Özel kuralı olan tanımsız testleri ilgili aşamalara dağıtır."""
+    if not ozel_kurallar:
+        return
+    for t in bitmis_testler:
+        kural = ozel_kurallar.get(t.ad)
+        if not kural:
+            continue
+        spek = kural.get("spek") or (t.spesifikasyon.spesifikasyon_metni
+                                     or t.spesifikasyon.metni_olustur())
+        for op in kural.get("asamalar", []):
+            yildiz = op in kural.get("yildiz", [])
+            cikti.append(_yeni(t.ad, op, TabloTipi.TEK_SONUC, spek,
+                               ipk=kural.get("ipk", False), yildiz=yildiz))
+
+
 def turet(bitmis_testler, etkin_maddeler, operasyonlar,
-          cift_katman=False, tablet_ipk=None):
+          cift_katman=False, tablet_ipk=None, ozel_test_kurallari=None):
     tablet_ipk = tablet_ipk or {}
     etkenler = _etken_adlari(etkin_maddeler, bitmis_testler)
     cikti = []
@@ -219,6 +255,13 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
                            SIZDIRMAZLIK_SPEK, ipk=True))
         cikti.append(mikro_kopya("Blisterleme", yildiz=False))  # blisterlemede * YOK
 
+    # Tanımsız testleri (özel kuralla) ilgili aşamalara ekle
+    _ozel_kuralli_ekle(cikti, bitmis_testler, ozel_test_kurallari)
+
+    # Operasyon sırasına göre stable sort (aşama içi göreceli sıra korunur)
+    op_sira = {"Karıştırma": 2, "Tablet Baskı": 3, "Film Kaplama": 4,
+               "Dolum": 3, "Blisterleme": 5}
+    cikti.sort(key=lambda t: op_sira.get(t.operasyon, 99))
     return cikti
 
 

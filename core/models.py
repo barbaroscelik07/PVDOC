@@ -322,6 +322,10 @@ class SpekKarti:
     # Kullanıcı girer; örn. {"Kalınlık": "4.75 mm (4.45 – 5.05 mm)", ...}
     tablet_ipk: dict = field(default_factory=dict)
 
+    # Tanımsız testler için kullanıcının verdiği kurallar (Word yüklemede sorulur).
+    # {test_adı: {"asamalar": [...], "yildiz": [...], "ipk": bool, "spek": str}}
+    ozel_test_kurallari: dict = field(default_factory=dict)
+
     # Eski alanlar (manuel/kopyala-yapıştır) — ileride kullanılabilir
     serbest_birakma: list[dict[str, str]] = field(default_factory=list)
     raf_omru: list[dict[str, str]] = field(default_factory=list)

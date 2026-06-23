@@ -323,12 +323,30 @@ class SpekModulu(QWidget):
         self.kart.otomatik_turet = True
         self.chk_turet.setChecked(True)
         self._tabloyu_yenile()
-        QMessageBox.information(
-            self, "Tablo 8 Yüklendi",
-            f"{len(r['testler'])} test ve {len(r['etkin_maddeler'])} etkin madde yüklendi.\n\n"
-            "Çıktı alırken Tablo 6/7/9 bu bilgilerden otomatik türetilecek. "
-            "Çift katmanlı tablet ise yukarıdaki kutucuğu işaretleyin ve "
-            "Tablet IPK değerlerini (Kalınlık/Çap/Sertlik/Aşınma) girin.")
+
+        # Tanımsız testler için kural sor (hatırlanmayanlar)
+        from core.kural_motoru import taninmayan_testler
+        ops = self._aktif_operasyonlar()
+        tanimsiz = [ad for ad in taninmayan_testler(r["testler"])
+                    if ad not in self.kart.ozel_test_kurallari]
+        sorulan = 0
+        for ad in tanimsiz:
+            spek_metni = ""
+            for t in r["testler"]:
+                if t.ad == ad:
+                    spek_metni = t.spesifikasyon.spesifikasyon_metni or t.spesifikasyon.metni_olustur()
+                    break
+            dlg = OzelTestKuralDialog(self, ad, ops, spek_metni)
+            if dlg.exec():
+                self.kart.ozel_test_kurallari[ad] = dlg.degerler()
+                sorulan += 1
+            # iptal ederse o test atlanır (çıktıda görünmez)
+
+        mesaj = (f"{len(r['testler'])} test ve {len(r['etkin_maddeler'])} etkin madde yüklendi.\n\n"
+                 "Çıktı alırken Tablo 6/7/9 bu bilgilerden otomatik türetilecek.")
+        if sorulan:
+            mesaj += f"\n\n{sorulan} özel test için kural tanımlandı."
+        QMessageBox.information(self, "Tablo 8 Yüklendi", mesaj)
 
     def _tablet_ipk_gir(self) -> None:
         """Tablo 8'de olmayan ara-aşama spesifikasyonlarını toplar."""
@@ -562,3 +580,55 @@ class IlgiliBilesiklerDialog(QDialog):
             imps.append({"ad": ad, "limit": limit, "maks": maks})
         return {"em_ad": self.in_em.text().strip(),
                 "operasyon": self.cmb_op.currentText(), "impuriteler": imps}
+
+
+class OzelTestKuralDialog(QDialog):
+    """
+    Tanımsız bir test için kural sorar: hangi aşamalar, her aşamada yıldız,
+    Tablo 7'ye eklensin mi, spesifikasyon.
+    """
+
+    def __init__(self, parent, test_adi, operasyonlar, spek_metni=""):
+        super().__init__(parent)
+        self.setWindowTitle(f"Test Kuralı: {test_adi}")
+        self.setStyleSheet(MODUL_STIL)
+        self.setMinimumWidth(520)
+        self.operasyonlar = operasyonlar
+        kok = QVBoxLayout(self)
+        kok.addWidget(baslik_etiketi(f"'{test_adi}' testi için kural"))
+        kok.addWidget(ipucu_etiketi(
+            "Bu test programda tanımlı değil. Hangi aşamalarda yer alacağını, "
+            "hangilerinde * (validasyon) olacağını ve Tablo 7'ye (IPK) eklenip "
+            "eklenmeyeceğini seçin."))
+
+        # Aşama + yıldız checkbox tablosu
+        izg = QGridLayout()
+        izg.addWidget(QLabel("Aşama"), 0, 0)
+        izg.addWidget(QLabel("Eklensin"), 0, 1)
+        izg.addWidget(QLabel("* (yıldız)"), 0, 2)
+        self.chk_asama = {}
+        self.chk_yildiz = {}
+        for i, op in enumerate(operasyonlar, 1):
+            izg.addWidget(QLabel(op), i, 0)
+            ca = QCheckBox(); izg.addWidget(ca, i, 1)
+            cy = QCheckBox(); izg.addWidget(cy, i, 2)
+            self.chk_asama[op] = ca
+            self.chk_yildiz[op] = cy
+        kok.addLayout(izg)
+
+        self.chk_ipk = QCheckBox("Tablo 7'ye (IPK) eklensin")
+        kok.addWidget(self.chk_ipk)
+
+        kok.addWidget(QLabel("Spesifikasyon:"))
+        self.in_spek = QLineEdit(spek_metni)
+        kok.addWidget(self.in_spek)
+
+        btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn.accepted.connect(self.accept); btn.rejected.connect(self.reject)
+        kok.addWidget(btn)
+
+    def degerler(self):
+        asamalar = [op for op in self.operasyonlar if self.chk_asama[op].isChecked()]
+        yildiz = [op for op in self.operasyonlar if self.chk_yildiz[op].isChecked()]
+        return {"asamalar": asamalar, "yildiz": yildiz,
+                "ipk": self.chk_ipk.isChecked(), "spek": self.in_spek.text().strip()}

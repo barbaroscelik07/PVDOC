@@ -50,6 +50,34 @@ def tablo8_bul(yol: str) -> Table | None:
     return None
 
 
+_USTSIMGE = {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+             "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+             "+": "⁺", "-": "⁻", "n": "ⁿ"}
+
+
+def _hucre_metni(cell) -> str:
+    """
+    Hücre metnini okur; superscript (üst simge) run'ları Unicode üst simgeye
+    çevirir. Böylece 10³/10² düzleşip '103/102' olmaz.
+    """
+    from docx.oxml.ns import qn
+    parcalar = []
+    for p in cell.paragraphs:
+        for r in p.runs:
+            metin = r.text
+            rPr = r._element.find(qn('w:rPr'))
+            ust = False
+            if rPr is not None:
+                va = rPr.find(qn('w:vertAlign'))
+                if va is not None and va.get(qn('w:val')) == "superscript":
+                    ust = True
+            if ust:
+                metin = "".join(_USTSIMGE.get(c, c) for c in metin)
+            parcalar.append(metin)
+        parcalar.append("\n")
+    return "".join(parcalar).strip()
+
+
 def _sayi(metin: str):
     import re
     m = re.search(r"(\d+(?:[.,]\d+)?)", metin or "")
@@ -83,17 +111,30 @@ def tablo8_coz(yol: str) -> dict:
         return etkenler[ad]
 
     rows = t.rows[1:]  # başlık satırını atla
-    for row in rows:
-        sol = row.cells[0].text.strip()
-        sag = row.cells[1].text.strip()
+    for ri_idx, row in enumerate(rows):
+        sol = _hucre_metni(row.cells[0])
+        sag = _hucre_metni(row.cells[1])
         n = _norm(sol)
         if not sol and not sag:
             continue
+        # bir sonraki dolu satırın sol hücresi (etkin madde başlığı tespiti için)
+        sonraki_sol = ""
+        for ileri in rows[ri_idx + 1:]:
+            s = _hucre_metni(ileri.cells[0])
+            if s:
+                sonraki_sol = s
+                break
 
         # --- Bölüm başlıkları ---
         if n == "ilgili bilesikler" or n.startswith("ilgili bilesik"):
             ilgili_bolumde = True
-            aktif_etken_imp = None
+            # Grup başlığı ("'e Ait") yoksa impuriteler son tanınan etkene gider.
+            if aktif_etken_adi:
+                aktif_etken_imp = _etken(aktif_etken_adi)
+            elif etkenler:
+                aktif_etken_imp = list(etkenler.values())[-1]
+            else:
+                aktif_etken_imp = None
             continue
 
         if ilgili_bolumde:
@@ -104,17 +145,18 @@ def tablo8_coz(yol: str) -> dict:
                     ad = sol.replace("e Ait", "").replace("a Ait", "").strip()
                 aktif_etken_imp = _etken(ad)
                 continue
-            # impurite satırı
-            if aktif_etken_imp is not None and sol.startswith(("—", "-", "–")):
-                ad = sol.lstrip("—-– ").strip()
-                te = "t.e" in _norm(sag)
-                aktif_etken_imp.impuriteler.append(Impurite(
-                    ad=ad, limit_metni=sag, maksimum_deger=_sayi(sag), te=te))
-                continue
-            # İlgili Bileşikler bölümü bitmiş olabilir (mikrobiyolojik başladı)
-            if "mikrobiyolojik" in n:
+            # impurite satırı (— ile başlar)
+            if sol.startswith(("—", "-", "–")):
+                if aktif_etken_imp is not None:
+                    ad = sol.lstrip("—-– ").strip()
+                    te = "t.e" in _norm(sag)
+                    aktif_etken_imp.impuriteler.append(Impurite(
+                        ad=ad, limit_metni=sag, maksimum_deger=_sayi(sag), te=te))
+                    continue
+            else:
+                # — ile başlamayan satır → İlgili Bileşikler bölümü bitti
+                # (yeni etkin madde başlığı veya düz test). Aşağıda normal işlenecek.
                 ilgili_bolumde = False
-                # aşağıda mikro işlenecek
 
         # --- Mikrobiyolojik ---
         if "mikrobiyolojik" in n:
@@ -151,9 +193,22 @@ def tablo8_coz(yol: str) -> dict:
             if agirlik_test is not None and not sol.startswith(("—", "-", "–")):
                 agirlik_test = None  # ağırlık bölümü bitti
 
-        # --- Etkin madde başlığı ("Etkin madde 1") ---
-        if n.startswith("etkin madde") and not sag and "ilgili" not in n and "dissol" not in n:
+        # --- Etkin madde başlığı ---
+        # Yapısal tespit: sağ hücre boş + bir sonraki satır "—" ile başlayıp
+        # Teşhis/Miktar içeriyorsa, bu satır bir etkin madde başlığıdır (ismi ne olursa olsun).
+        sonraki_n = _norm(sonraki_sol.lstrip("—-– "))
+        sonraki_alt = sonraki_sol.startswith(("—", "-", "–"))
+        etken_basligi = (
+            not sag and "ilgili" not in n and "dissol" not in n
+            and "mikrobiyolojik" not in n and "agirlik" not in n
+            and (
+                n.startswith("etkin madde")
+                or (sonraki_alt and ("teshis" in sonraki_n or "miktar" in sonraki_n))
+            )
+        )
+        if etken_basligi:
             aktif_etken_adi = sol.strip()
+            _etken(aktif_etken_adi)  # etkin maddeler sözlüğüne ekle
             continue
 
         # --- Alt satır: Teşhis / Miktar Tayini (aktif etken altında) ---

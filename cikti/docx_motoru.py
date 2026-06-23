@@ -1137,7 +1137,8 @@ def _turetilmis_testlerle(proje: ProjeVerisi):
         ops = proje.urun_formu.operasyonlar
         kart.testler = turet(orijinal, kart.etkin_maddeler, ops,
                              cift_katman=getattr(kart, "cift_katman", False),
-                             tablet_ipk=getattr(kart, "tablet_ipk", {}))
+                             tablet_ipk=getattr(kart, "tablet_ipk", {}),
+                             ozel_test_kurallari=getattr(kart, "ozel_test_kurallari", {}))
         try:
             yield
         finally:

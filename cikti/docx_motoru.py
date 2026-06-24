@@ -1139,14 +1139,14 @@ def _doldur_uretim_yontemi(doc, proje: ProjeVerisi) -> None:
         return yp
 
     def _tablo_ekle(sonra_el, satirlar):
-        """2 sütunlu basit parametre tablosu ekler."""
+        """2 sütunlu dar, ortalı parametre tablosu (taslaktaki gibi)."""
         tbl = OxmlElement("w:tbl")
-        # tablo özellikleri
         tblPr = OxmlElement("w:tblPr")
         st = OxmlElement("w:tblStyle"); st.set(qn("w:val"), "TableGrid"); tblPr.append(st)
+        # ortalı
+        jc = OxmlElement("w:jc"); jc.set(qn("w:val"), "center"); tblPr.append(jc)
         tblW = OxmlElement("w:tblW"); tblW.set(qn("w:w"), "0"); tblW.set(qn("w:type"), "auto")
         tblPr.append(tblW)
-        # kenarlıklar
         borders = OxmlElement("w:tblBorders")
         for kenar in ("top", "left", "bottom", "right", "insideH", "insideV"):
             b = OxmlElement(f"w:{kenar}")
@@ -1155,16 +1155,17 @@ def _doldur_uretim_yontemi(doc, proje: ProjeVerisi) -> None:
             borders.append(b)
         tblPr.append(borders)
         tbl.append(tblPr)
+        # dar sütunlar (taslaktaki gibi: ~2223 / 2410)
         grid = OxmlElement("w:tblGrid")
-        for w in (4500, 4845):
+        for w in (2223, 2410):
             gc = OxmlElement("w:gridCol"); gc.set(qn("w:w"), str(w)); grid.append(gc)
         tbl.append(grid)
         for sol, sag in satirlar:
             tr = OxmlElement("w:tr")
-            for metin in (sol, sag):
+            for metin, gen in ((sol, 2223), (sag, 2410)):
                 tc = OxmlElement("w:tc")
                 tcPr = OxmlElement("w:tcPr")
-                tcW = OxmlElement("w:tcW"); tcW.set(qn("w:w"), "4500"); tcW.set(qn("w:type"), "dxa")
+                tcW = OxmlElement("w:tcW"); tcW.set(qn("w:w"), str(gen)); tcW.set(qn("w:type"), "dxa")
                 tcPr.append(tcW); tc.append(tcPr)
                 pp = OxmlElement("w:p")
                 run = OxmlElement("w:r")

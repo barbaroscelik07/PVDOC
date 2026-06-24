@@ -348,6 +348,9 @@ class SpekModulu(QWidget):
             mesaj += f"\n\n{sorulan} özel test için kural tanımlandı."
         QMessageBox.information(self, "Tablo 8 Yüklendi", mesaj)
 
+        # Tablet IPK / ara aşama spesifikasyonlarını hemen sor (tanımsız testler gibi)
+        self._tablet_ipk_gir()
+
     def _tablet_ipk_gir(self) -> None:
         """Tablo 8'de olmayan ara-aşama spesifikasyonlarını toplar."""
         dlg = QDialog(self)

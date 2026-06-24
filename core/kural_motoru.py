@@ -112,7 +112,8 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
 
     gorunus = _bul(bitmis_testler, "görünüş")          # bitmiş/film görünüş
     ort_agirlik = _bul(bitmis_testler, "ortalama ağırlık")
-    agirlik_tek = _bul(bitmis_testler, "ağırlık tekdüzeliği")
+    agirlik_tek = (_bul(bitmis_testler, "ağırlık tekdüzeliği")
+                   or _bul(bitmis_testler, "ağırlık sapması"))
     dagilma = _bul(bitmis_testler, "dağılma")          # film için (30 dk)
     mikro = next((t for t in bitmis_testler if t.mikrobiyolojik), None)
 

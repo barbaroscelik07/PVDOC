@@ -998,11 +998,14 @@ def _tolerans_oran(tolerans: str):
 def _miktar_spek_uret(hedef: float, tolerans: str, birim: str) -> str:
     """Hedef + tolerans → '10.0 mg/f.tab ±%7.5 (9.25 – 10.75 mg/f.tab)'."""
     oran = _tolerans_oran(tolerans)
+    birim = (birim or "").strip()
     if oran is None:
         return f"{hedef:g} {birim}".strip()
     alt = round(hedef * (1 - oran), 4)
     ust = round(hedef * (1 + oran), 4)
-    return f"{hedef:g} {birim} {tolerans} ({alt:g} – {ust:g} {birim})".strip()
+    if birim:
+        return f"{hedef:g} {birim} {tolerans} ({alt:g} – {ust:g} {birim})"
+    return f"{hedef:g} {tolerans} ({alt:g} – {ust:g})"
 
 
 def _test_bul(testler, *anahtarlar):
@@ -1016,76 +1019,52 @@ def _test_bul(testler, *anahtarlar):
 
 def _doldur_tablo89(doc, proje: ProjeVerisi) -> None:
     """
-    Tablo 8 (Serbest Bırakma) ve Tablo 9 (Raf Ömrü).
-    SABİT şablon sırası: Görünüş → Ortalama Ağırlık → Ağırlık Tekdüzeliği (2 alt) →
-    Dağılma → her etkin madde (Teşhis / Miktar Tayini) → Dissolüsyon →
-    İlgili Bileşikler (etken başına gruplu) → Mikrobiyolojik Kontrol (3 alt).
-    İçerik Tablo 6'daki testlerden ve etkin maddelerden gelir.
-    Tablo 9 farkları: Ağırlık Tekdüzeliği* ve Teşhis* yıldızlı, Miktar Tayini
-    toleransı farklı, en altta '* Stabilite analizlerinde bakılmayacaktır' notu.
+    Tablo 8 (Serbest Bırakma) = kullanıcının yüklediği bitmiş ürün spesifikasyonu
+    AYNEN (sıra, alt satırlar, etken grupları korunur).
+    Tablo 9 (Raf Ömrü) = Tablo 8 ile aynı, sadece Miktar Tayini toleransı uygulanır.
     """
     kart = proje.spek_karti
     if not kart.tablo89_ekle:
         return
-
-    testler = kart.testler
+    # Orijinal bitmiş ürün listesi (türetme öncesi); yoksa mevcut testler
+    bitmis = getattr(kart, "_bitmis_urun_testleri", None) or kart.testler
     etkenler = kart.etkin_maddeler
 
     def _satirlari_uret(raf_omru: bool, tol: str):
-        """(etiket, spek, girinti) üçlülerinden satır listesi üretir."""
         yildiz = "*" if raf_omru else ""
-        satirlar = []  # (sol_metin, sag_metin)
-
-        # Görünüş
-        g = _test_bul(testler, "görünüş")
-        satirlar.append(("Görünüş", g.spesifikasyon.metni_olustur() if g else ""))
-        # Ortalama Ağırlık
-        oa = _test_bul(testler, "ortalama ağırlık")
-        satirlar.append(("Ortalama Ağırlık", oa.spesifikasyon.metni_olustur() if oa else ""))
-        # Ağırlık Tekdüzeliği (başlık + 2 alt)
-        at = _test_bul(testler, "ağırlık tekdüzeliği")
-        satirlar.append((f"Ağırlık Tekdüzeliği{yildiz}", ""))
-        if at:
-            satirlar.append((at.aciklama_etiketi or "—20 tablette tek tek tabletlerden maksimum 2 tanesi bu limitten sapabilir.", at.aciklama_spek))
-            if at.aciklama2_etiketi:
-                satirlar.append((at.aciklama2_etiketi, at.aciklama2_spek))
-        # Dağılma
-        dg = _test_bul(testler, "dağılma")
-        satirlar.append(("Dağılma", dg.spesifikasyon.metni_olustur() if dg else "Maksimum 30 dakika"))
-        # Her etkin madde: Teşhis + Miktar Tayini
-        for em in etkenler:
-            satirlar.append((em.ad, ""))  # ara başlık
-            tes = _test_bul(testler, em.ad, "teşhis")
-            satirlar.append((f"— Teşhis{yildiz}",
-                             tes.spesifikasyon.metni_olustur() if tes else "Standart ve numune alıkonma zamanı aynı olmalıdır."))
-            mt = _test_bul(testler, em.ad, "miktar tayini")
-            if mt:
-                mt_spek = mt.spesifikasyon.metni_olustur()
-                if raf_omru and mt.spesifikasyon.hedef_deger:
-                    mt_spek = _miktar_spek_uret(mt.spesifikasyon.hedef_deger, tol, mt.spesifikasyon.birim)
-                satirlar.append(("—Miktar Tayini", mt_spek))
-        # Dissolüsyon (her etken)
-        for em in etkenler:
-            ds = _test_bul(testler, em.ad, "dissolüsyon")
-            if ds:
-                satirlar.append((f"{em.ad} Dissolüsyon (Q)", ds.spesifikasyon.metni_olustur()))
-        # İlgili Bileşikler (etken başına gruplu)
-        if any(em.impuriteler for em in etkenler):
-            satirlar.append(("İlgili Bileşikler", ""))
-            for em in etkenler:
-                if not em.impuriteler:
-                    continue
-                satirlar.append((f"{em.ad}'e Ait", ""))  # italik ara başlık
-                for imp in em.impuriteler:
-                    ad = imp.ad if imp.ad.startswith("—") or imp.ad.startswith("-") else f"—{imp.ad}"
-                    satirlar.append((ad, imp.limit_metni or ""))
-        # Mikrobiyolojik Kontrol (3 alt)
-        mik = next((t for t in testler if t.mikrobiyolojik), None)
-        if mik:
-            satirlar.append(("Mikrobiyolojik Kontrol", ""))
-            for etiket, spek_metni in (mik.alt_satirlar or []):
-                ad = etiket if etiket.startswith("—") or etiket.startswith("-") else f"—{etiket}"
-                satirlar.append((ad, spek_metni))
+        satirlar = []  # (sol, sag)
+        for test in bitmis:
+            ad = test.ad
+            spek = test.spesifikasyon.spesifikasyon_metni or test.spesifikasyon.metni_olustur()
+            # Mikrobiyolojik: başlık + alt satırlar
+            if test.mikrobiyolojik:
+                satirlar.append(("Mikrobiyolojik Kontrol", ""))
+                for et, sp in (test.alt_satirlar or []):
+                    satirlar.append((et, sp))
+                continue
+            # Ağırlık Tekdüzeliği/Sapması: başlık (boş) + 2 alt satır
+            if test.aciklama_etiketi:
+                satirlar.append((ad, ""))
+                satirlar.append((test.aciklama_etiketi, test.aciklama_spek))
+                if test.aciklama2_etiketi:
+                    satirlar.append((test.aciklama2_etiketi, test.aciklama2_spek))
+                continue
+            # Miktar Tayini: raf ömründe tolerans uygula
+            if raf_omru and "miktar tayini" in _norm_basit(ad) and test.spesifikasyon.hedef_deger:
+                spek = _miktar_spek_uret(test.spesifikasyon.hedef_deger, tol, test.spesifikasyon.birim)
+            satirlar.append((ad, spek))
+        # İlgili Bileşikler (etken grupları, eğer bitmiş listede ayrı test olarak yoksa)
+        if etkenler and any(em.impuriteler for em in etkenler):
+            zaten_var = any("ilgili" in _norm_basit(t.ad) for t in bitmis)
+            if not zaten_var:
+                satirlar.append(("İlgili Bileşikler", ""))
+                for em in etkenler:
+                    if not em.impuriteler:
+                        continue
+                    satirlar.append((f"{em.ad}'e Ait", ""))
+                    for imp in em.impuriteler:
+                        a = imp.ad if imp.ad.startswith(("—", "-")) else f"—{imp.ad}"
+                        satirlar.append((a, imp.limit_metni or ""))
         return satirlar
 
     for tablo_no, raf, tol in [(8, False, kart.serbest_birakma_tolerans),
@@ -1101,8 +1080,12 @@ def _doldur_tablo89(doc, proje: ProjeVerisi) -> None:
             cells = t.rows[ri].cells
             hucre_yaz(cells[0], sol)
             hucre_yaz(cells[-1], sag)
-        # Not: Tablo 9 '* Stabilite analizlerinde bakılmayacaktır.' notu şablonda
-        # zaten mevcut; tekrar eklenmez.
+
+
+def _norm_basit(s: str) -> str:
+    tr = str.maketrans({"ı": "i", "İ": "i", "ş": "s", "ç": "c", "ö": "o",
+                        "ü": "u", "ğ": "g", "I": "i"})
+    return (s or "").translate(tr).lower()
 
 
 def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
@@ -1134,6 +1117,7 @@ def _turetilmis_testlerle(proje: ProjeVerisi):
             return
         from core.kural_motoru import turet
         orijinal = kart.testler
+        kart._bitmis_urun_testleri = orijinal  # Tablo 8/9 bunu kullanır
         ops = proje.urun_formu.operasyonlar
         kart.testler = turet(orijinal, kart.etkin_maddeler, ops,
                              cift_katman=getattr(kart, "cift_katman", False),
@@ -1143,6 +1127,7 @@ def _turetilmis_testlerle(proje: ProjeVerisi):
             yield
         finally:
             kart.testler = orijinal
+            kart._bitmis_urun_testleri = None
     return _ctx()
 
 

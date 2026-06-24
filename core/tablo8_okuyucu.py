@@ -292,4 +292,10 @@ def _test_yap(ad: str, spek_metni: str, tip: TabloTipi) -> Test:
     if _norm(ad).endswith("gorunus") or "teshis" in _norm(ad):
         sp.limit_turu = LimitTuru.METIN
         sp.sabit_sonuc = spek_metni
+    # Miktar Tayini birimini ayıkla (Tablo 9 toleransı için): "500 mg/f.t ± %5" → "mg/f.t"
+    if "miktar" in _norm(ad):
+        import re
+        m = re.search(r"\d+(?:[.,]\d+)?\s*([a-zA-Zğüşıöçİ./]+)", spek_metni or "")
+        if m:
+            sp.birim = m.group(1).strip()
     return Test(ad=ad, tablo_tipi=tip, spesifikasyon=sp)

@@ -321,7 +321,10 @@ class SpekModulu(QWidget):
         self.kart.testler = r["testler"]
         self.kart.etkin_maddeler = r["etkin_maddeler"]
         self.kart.otomatik_turet = True
+        self.kart.tablo89_ekle = True   # Word yüklenince Tablo 8/9 otomatik dolar
         self.chk_turet.setChecked(True)
+        if hasattr(self, "chk_t89"):
+            self.chk_t89.setChecked(True)
         self._tabloyu_yenile()
 
         # Tanımsız testler için kural sor (hatırlanmayanlar)

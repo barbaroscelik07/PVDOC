@@ -1024,10 +1024,10 @@ def _doldur_tablo89(doc, proje: ProjeVerisi) -> None:
     Tablo 9 (Raf Ömrü) = Tablo 8 ile aynı, sadece Miktar Tayini toleransı uygulanır.
     """
     kart = proje.spek_karti
-    if not kart.tablo89_ekle:
-        return
     # Orijinal bitmiş ürün listesi (türetme öncesi); yoksa mevcut testler
     bitmis = getattr(kart, "_bitmis_urun_testleri", None) or kart.testler
+    if not bitmis:
+        return
     etkenler = kart.etkin_maddeler
 
     def _satirlari_uret(raf_omru: bool, tol: str):
@@ -1067,8 +1067,11 @@ def _doldur_tablo89(doc, proje: ProjeVerisi) -> None:
                         satirlar.append((a, imp.limit_metni or ""))
         return satirlar
 
-    for tablo_no, raf, tol in [(8, False, kart.serbest_birakma_tolerans),
-                               (9, True, kart.raf_omru_tolerans)]:
+    raf_omru_ekle = getattr(kart, "tablo89_ekle", True)
+    hedefler = [(8, False, kart.serbest_birakma_tolerans)]
+    if raf_omru_ekle:
+        hedefler.append((9, True, kart.raf_omru_tolerans))
+    for tablo_no, raf, tol in hedefler:
         t = _tablo_basliga_gore(doc, tablo_no)
         if t is None:
             continue

@@ -73,7 +73,8 @@ def test_taninir_mi(ad: str) -> bool:
     anahtarlar = ["gorunus", "elek", "karisim tekduzeligi", "ortalama agirlik",
                   "agirlik tekduzeligi", "agirlik sapmasi", "sertlik", "kalinlik",
                   "cap", "asinma", "dagilma", "teshis", "miktar tayini",
-                  "dissol", "ilgili bilesik", "mikrobiyolojik", "sizdirmazlik"]
+                  "dissol", "ilgili bilesik", "mikrobiyolojik", "sizdirmazlik",
+                  "nem", "icerik tekduzeligi", "boyar madde"]
     return any(a in n for a in anahtarlar)
 
 
@@ -210,6 +211,10 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
                            tablet_ipk.get("Sertlik", ""), ipk=True))
         cikti.append(_yeni("Aşınma", "Tablet Baskı", TabloTipi.TEK_SONUC, ASINMA_SPEK, ipk=True))
         cikti.append(_yeni("Dağılma", "Tablet Baskı", TabloTipi.BOS_NOKTA, TABLET_DAGILMA, ipk=True))
+        nem = _bul(bitmis_testler, "nem")
+        if nem:
+            cikti.append(_yeni("Nem", "Tablet Baskı", TabloTipi.TEK_SONUC,
+                               kaynak_spek=nem.spesifikasyon))
         for em in etkenler:
             tes = _bul(bitmis_testler, "teşhis", etken=em)
             cikti.append(_yeni(f"{em} Teşhis", "Tablet Baskı", TabloTipi.TEK_SONUC,
@@ -217,6 +222,10 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
             mik = _bul(bitmis_testler, "miktar", etken=em)
             cikti.append(_yeni(f"{em} Miktar Tayini", "Tablet Baskı", TabloTipi.IKI_NUMUNE,
                                kaynak_spek=(mik.spesifikasyon if mik else None)))
+            icerik = _bul(bitmis_testler, "içerik tekdüzeliği", etken=em)
+            if icerik:
+                cikti.append(_yeni(f"{em} İçerik Tekdüzeliği", "Tablet Baskı", TabloTipi.TEK_SONUC,
+                                   kaynak_spek=icerik.spesifikasyon))
             dis = _bul(bitmis_testler, "dissol", etken=em)
             if dis:
                 cikti.append(_yeni(f"{em} Dissolüsyon (Q)", "Tablet Baskı", TabloTipi.BOS_NOKTA,
@@ -235,6 +244,10 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
         if dagilma:
             cikti.append(_yeni("Dağılma", "Film Kaplama", TabloTipi.BOS_NOKTA,
                                kaynak_spek=dagilma.spesifikasyon, ipk=True))
+        nem = _bul(bitmis_testler, "nem")
+        if nem:
+            cikti.append(_yeni("Nem", "Film Kaplama", TabloTipi.TEK_SONUC,
+                               kaynak_spek=nem.spesifikasyon))
         for em in etkenler:
             tes = _bul(bitmis_testler, "teşhis", etken=em)
             cikti.append(_yeni(f"{em} Teşhis", "Film Kaplama", TabloTipi.TEK_SONUC,
@@ -246,6 +259,10 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
             if dis:
                 cikti.append(_yeni(f"{em} Dissolüsyon (Q)", "Film Kaplama", TabloTipi.BOS_NOKTA,
                                    kaynak_spek=dis.spesifikasyon))
+        boyar = _bul(bitmis_testler, "boyar madde")
+        if boyar:
+            cikti.append(_yeni("Boyar Madde Tanıması", "Film Kaplama", TabloTipi.TEK_SONUC,
+                               kaynak_spek=boyar.spesifikasyon))
         cikti += ilgili_bilesikler("Film Kaplama", yildiz=False)  # film'de * YOK
         cikti.append(mikro_kopya("Film Kaplama", yildiz=True))
 

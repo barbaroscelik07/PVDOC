@@ -104,6 +104,7 @@ def tablo8_coz(yol: str) -> dict:
     mikro_test = None
     agirlik_test = None
     aktif_etken_adi = None     # "Etkin madde 1" başlığı altındayız
+    _bekleyen_boyar = []       # Boyar Madde gibi alt-satır spec'i bekleyen testler
 
     def _etken(ad):
         if ad not in etkenler:
@@ -172,10 +173,10 @@ def tablo8_coz(yol: str) -> dict:
             mikro_test.alt_satirlar.append((sol, sag))
             continue
 
-        # --- Ağırlık Tekdüzeliği (başlık + 2 alt) ---
-        if "agirlik tekduzeligi" in n and not sag:
+        # --- Ağırlık Tekdüzeliği / Ağırlık Sapması (başlık + 2 alt) ---
+        if ("agirlik tekduzeligi" in n or "agirlik sapmasi" in n) and not sag:
             agirlik_test = Test(
-                ad="Ağırlık Tekdüzeliği", tablo_tipi=TabloTipi.AGIRLIK_TEKDUZELIGI,
+                ad=sol.strip(), tablo_tipi=TabloTipi.AGIRLIK_TEKDUZELIGI,
                 spesifikasyon=Spesifikasyon(limit_turu=LimitTuru.ARALIK, birim="mg"))
             testler.append(agirlik_test)
             continue
@@ -211,22 +212,49 @@ def tablo8_coz(yol: str) -> dict:
             _etken(aktif_etken_adi)  # etkin maddeler sözlüğüne ekle
             continue
 
-        # --- Alt satır: Teşhis / Miktar Tayini (aktif etken altında) ---
+        # --- Alt satır: Teşhis / Miktar / İçerik Tekdüzeliği (aktif etken altında) ---
         if sol.startswith(("—", "-", "–")) and aktif_etken_adi:
             alt_ad = sol.lstrip("—-– ").strip()
+            alt_ad = _ad_temizle(alt_ad)
             tam_ad = f"{aktif_etken_adi} {alt_ad}"
             tip = TabloTipi.IKI_NUMUNE if "miktar" in _norm(alt_ad) else TabloTipi.TEK_SONUC
             testler.append(_test_yap(tam_ad, sag, tip))
             continue
 
-        # --- Düz testler (Görünüş, Ortalama Ağırlık, Dağılma, Dissolüsyon) ---
+        # --- Düz testler ---
         if sol and not sol.startswith(("—", "-", "–")):
+            ad_temiz = _ad_temizle(sol)
+            # Etken başlığı altındaki "Dissolüsyon" o etkene bağlanır
+            if "dissol" in n and aktif_etken_adi:
+                testler.append(_test_yap(f"{aktif_etken_adi} {ad_temiz}", sag, TabloTipi.BOS_NOKTA))
+                continue
             aktif_etken_adi = None
             tip = _tip_tahmin(n)
-            testler.append(_test_yap(sol, sag, tip))
+            yeni_test = _test_yap(ad_temiz, sag, tip)
+            testler.append(yeni_test)
+            # Boyar Madde gibi başlık(boş)+alt satırlı testler: alt satırın
+            # değerini bu testin spesifikasyonu yap
+            if not sag and "boyar madde" in n:
+                _bekleyen_boyar.append(yeni_test)
+            continue
+        # Boyar Madde alt satırı (-Titanyum dioksit ...)
+        if sol.startswith(("—", "-", "–")) and _bekleyen_boyar and not aktif_etken_adi:
+            hedef = _bekleyen_boyar.pop()
+            hedef.spesifikasyon.spesifikasyon_metni = sag
+            hedef.spesifikasyon.sabit_sonuc = sag
+            continue
 
     return {"bulundu": True, "testler": testler,
             "etkin_maddeler": list(etkenler.values())}
+
+
+def _ad_temizle(ad: str) -> str:
+    """Test adından parantezli açıklama ve satır sonlarını temizler."""
+    import re
+    ad = ad.replace("\n", " ").strip()
+    # '(Kütle varyasyonuna göre)' gibi parantezli ekleri at
+    ad = re.sub(r"\s*\([^)]*\)\s*", " ", ad).strip()
+    return ad
 
 
 def _alt_ust_metinden(metin):

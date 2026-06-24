@@ -1088,16 +1088,18 @@ def _norm_basit(s: str) -> str:
 def _doldur_uretim_yontemi(doc, proje: ProjeVerisi) -> None:
     """
     Şablonda 'üretim prosesi ... açıklanmaktadır' ile 'Proses Akış Diyagramı'
-    arasındaki örnek Operasyon/Aşama paragraflarını siler, kullanıcının
-    yüklediği üretim adımlarıyla değiştirir.
+    arasındaki örnek paragrafları siler, kullanıcının üretim adımlarıyla
+    değiştirir. Her adım: başlık (kalın) + açıklama + (varsa) parametre tablosu.
     """
     adimlar = getattr(proje, "uretim_adimlari", None)
     if not adimlar:
         return
     from docx.shared import Pt, RGBColor
-    govde = doc.element.body
-    paralar = list(doc.paragraphs)
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.text.paragraph import Paragraph
 
+    paralar = list(doc.paragraphs)
     bas_idx = son_idx = None
     for i, p in enumerate(paralar):
         t = p.text.strip().lower()
@@ -1109,21 +1111,26 @@ def _doldur_uretim_yontemi(doc, proje: ProjeVerisi) -> None:
     if bas_idx is None or son_idx is None:
         return
 
-    # bas_idx ile son_idx arasındaki paragrafları sil (sınırlar hariç)
-    silinecek = paralar[bas_idx + 1:son_idx]
-    for p in silinecek:
+    for p in paralar[bas_idx + 1:son_idx]:
         p._p.getparent().remove(p._p)
 
-    # Yeni içeriği 'üretim prosesi...' paragrafından SONRA ekle
-    capa = paralar[bas_idx]._p
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
+    # Aradaki şablon ÖRNEK tablolarını da sil (paragraflar arasındaki w:tbl'ler)
+    bas_p_el = paralar[bas_idx]._p
+    son_p_el = paralar[son_idx]._p
+    el = bas_p_el.getnext()
+    while el is not None and el is not son_p_el:
+        sonraki = el.getnext()
+        if el.tag.endswith("}tbl"):
+            el.getparent().remove(el)
+        el = sonraki
 
-    def _yeni_para_ekle(sonra_el, metin, bold):
+    capa_parent = paralar[bas_idx]._parent
+    son_el = paralar[bas_idx]._p
+
+    def _para_ekle(sonra_el, metin, bold):
         yp = OxmlElement("w:p")
         sonra_el.addnext(yp)
-        from docx.text.paragraph import Paragraph
-        para = Paragraph(yp, paralar[bas_idx]._parent)
+        para = Paragraph(yp, capa_parent)
         run = para.add_run(metin)
         run.bold = bold
         run.font.name = "Times New Roman"
@@ -1131,14 +1138,59 @@ def _doldur_uretim_yontemi(doc, proje: ProjeVerisi) -> None:
         run.font.color.rgb = RGBColor(0, 0, 0)
         return yp
 
-    # Adımları ters sırada ekleyemeyiz; capa'yı ilerlet
-    son_el = capa
-    # boşluk paragrafı
-    son_el = _yeni_para_ekle(son_el, "", False)
-    for baslik, aciklama in adimlar:
-        son_el = _yeni_para_ekle(son_el, baslik, True)       # Operasyon X: Aşama Y (kalın)
-        son_el = _yeni_para_ekle(son_el, aciklama, False)    # açıklama
-        son_el = _yeni_para_ekle(son_el, "", False)          # boşluk
+    def _tablo_ekle(sonra_el, satirlar):
+        """2 sütunlu basit parametre tablosu ekler."""
+        tbl = OxmlElement("w:tbl")
+        # tablo özellikleri
+        tblPr = OxmlElement("w:tblPr")
+        st = OxmlElement("w:tblStyle"); st.set(qn("w:val"), "TableGrid"); tblPr.append(st)
+        tblW = OxmlElement("w:tblW"); tblW.set(qn("w:w"), "0"); tblW.set(qn("w:type"), "auto")
+        tblPr.append(tblW)
+        # kenarlıklar
+        borders = OxmlElement("w:tblBorders")
+        for kenar in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            b = OxmlElement(f"w:{kenar}")
+            b.set(qn("w:val"), "single"); b.set(qn("w:sz"), "4")
+            b.set(qn("w:space"), "0"); b.set(qn("w:color"), "000000")
+            borders.append(b)
+        tblPr.append(borders)
+        tbl.append(tblPr)
+        grid = OxmlElement("w:tblGrid")
+        for w in (4500, 4845):
+            gc = OxmlElement("w:gridCol"); gc.set(qn("w:w"), str(w)); grid.append(gc)
+        tbl.append(grid)
+        for sol, sag in satirlar:
+            tr = OxmlElement("w:tr")
+            for metin in (sol, sag):
+                tc = OxmlElement("w:tc")
+                tcPr = OxmlElement("w:tcPr")
+                tcW = OxmlElement("w:tcW"); tcW.set(qn("w:w"), "4500"); tcW.set(qn("w:type"), "dxa")
+                tcPr.append(tcW); tc.append(tcPr)
+                pp = OxmlElement("w:p")
+                run = OxmlElement("w:r")
+                rPr = OxmlElement("w:rPr")
+                rf = OxmlElement("w:rFonts"); rf.set(qn("w:ascii"), "Times New Roman")
+                rf.set(qn("w:hAnsi"), "Times New Roman"); rPr.append(rf)
+                sz = OxmlElement("w:sz"); sz.set(qn("w:val"), "24"); rPr.append(sz)
+                col = OxmlElement("w:color"); col.set(qn("w:val"), "000000"); rPr.append(col)
+                run.append(rPr)
+                wt = OxmlElement("w:t"); wt.text = metin; run.append(wt)
+                pp.append(run); tc.append(pp); tr.append(tc)
+            tbl.append(tr)
+        sonra_el.addnext(tbl)
+        return tbl
+
+    son_el = _para_ekle(son_el, "", False)
+    for adim in adimlar:
+        # adım (baslik, aciklama) veya (baslik, aciklama, tablo) olabilir
+        baslik = adim[0]
+        aciklama = adim[1] if len(adim) > 1 else ""
+        tablo = adim[2] if len(adim) > 2 else []
+        son_el = _para_ekle(son_el, baslik, True)
+        son_el = _para_ekle(son_el, aciklama, False)
+        if tablo:
+            son_el = _tablo_ekle(son_el, tablo)
+        son_el = _para_ekle(son_el, "", False)
 
 
 def _doldur_uretim_yontemi_eski(doc, proje):

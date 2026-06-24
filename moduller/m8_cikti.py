@@ -123,16 +123,10 @@ class CiktiModulu(QWidget):
         kok.addWidget(bolum_etiketi("Ne üretilsin?"))
         self.chk_pvp = QCheckBox("PVP — Proses Validasyon Protokolü"); self.chk_pvp.setChecked(True)
         self.chk_pvr = QCheckBox("PVR — Proses Validasyon Raporu"); self.chk_pvr.setChecked(True)
-        self.chk_pdf = QCheckBox("PDF de üret")
         self.chk_veri = QCheckBox("PVR sonuç verisini yeniden üret"); self.chk_veri.setChecked(True)
         kok.addWidget(self.chk_pvp)
         kok.addWidget(self.chk_pvr)
-        kok.addWidget(self.chk_pdf)
         kok.addWidget(self.chk_veri)
-
-        if not pdf_mevcut_mu():
-            self.chk_pdf.setEnabled(False)
-            self.chk_pdf.setText("PDF de üret  (LibreOffice bulunamadı — yalnızca Word)")
 
         kok.addWidget(ayirici())
         b = QPushButton("Dosyaları Üret…")
@@ -174,7 +168,7 @@ class CiktiModulu(QWidget):
         self._isci = UretimIscisi(
             self.proje, Path(dizin),
             pvp=self.chk_pvp.isChecked(), pvr=self.chk_pvr.isChecked(),
-            pdf=self.chk_pdf.isChecked() and self.chk_pdf.isEnabled(),
+            pdf=False,
             veri_uret=self.chk_veri.isChecked(),
         )
         self._isci.ilerleme.connect(lambda m: self.gunluk.appendPlainText(m))

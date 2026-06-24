@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QSpinBox, QPlainTextEdit, QPushButton, QListWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QSplitter, QScrollArea,
+    QFileDialog, QMessageBox,
 )
 from PyQt6.QtCore import Qt
 
@@ -40,6 +41,17 @@ class ProsesModulu(QWidget):
         kok.setContentsMargins(22, 22, 22, 22)
         kok.setSpacing(12)
         kok.addWidget(baslik_etiketi("Üretim Yöntemi (Proses Tanımı)"))
+
+        # Word'den üretim yöntemi yükle
+        wbar = QHBoxLayout()
+        b_word = QPushButton("📄 Word'den Üretim Yöntemi Yükle")
+        b_word.setObjectName("birincil")
+        b_word.clicked.connect(self._word_yukle)
+        wbar.addWidget(b_word)
+        wbar.addWidget(ipucu_etiketi(
+            "'Operasyon X: Aşama Y' + açıklama çiftlerini okur, çıktıya aynen yazar."))
+        wbar.addStretch(1)
+        kok.addLayout(wbar)
 
         # Splitter: dar ekranda sol/sağ panel oranı korunur, paneller ezilmez
         bolucu = QSplitter(Qt.Orientation.Horizontal)
@@ -128,6 +140,29 @@ class ProsesModulu(QWidget):
         else:
             self._aktif = -1
             self._detay_aktif(False)
+
+    def _word_yukle(self) -> None:
+        """Word'den üretim yöntemi adımlarını (Operasyon/Aşama çiftleri) okur."""
+        yol, _ = QFileDialog.getOpenFileName(
+            self, "Üretim Yöntemi İçeren Word Dosyası Seç", "", "Word (*.docx)")
+        if not yol:
+            return
+        try:
+            from core.uretim_okuyucu import uretim_yontemi_coz
+            r = uretim_yontemi_coz(yol)
+        except Exception as e:
+            QMessageBox.warning(self, "Word Okuma Hatası", f"Dosya okunamadı:\n{e}")
+            return
+        if not r["bulundu"]:
+            QMessageBox.warning(self, "Bulunamadı",
+                                "Word dosyasında 'Operasyon X: Aşama Y' deseni bulunamadı.\n"
+                                "Üretim yöntemi 'Operasyon 1: Aşama 1' ile başlamalı.")
+            return
+        self.proje.uretim_adimlari = r["adimlar"]
+        QMessageBox.information(
+            self, "Üretim Yöntemi Yüklendi",
+            f"{len(r['adimlar'])} adım yüklendi.\n\n"
+            "Çıktı alırken üretim yöntemi bölümüne bu adımlar yazılacak.")
 
     def _asama_ekle(self) -> None:
         # akıllı varsayılan: son aşamanın operasyonunu sürdür, aşama no +1

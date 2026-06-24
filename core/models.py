@@ -412,6 +412,10 @@ class ProjeVerisi:
     # Bölüm 6/7
     risk_satirlari: list[RiskSatiri] = field(default_factory=list)
     proses_parametreleri: list[ProsesParametresi] = field(default_factory=list)
+
+    # Üretim yöntemi adımları: [(operasyon_baslik, aciklama), ...]
+    # Word'den yüklenir; örn. ("Operasyon 2: Aşama 1", "6.750 kg ... tartılır.")
+    uretim_adimlari: list = field(default_factory=list)
     ekipmanlar: list[Ekipman] = field(default_factory=list)
 
     # Bölüm 8 — spek kartından gelir

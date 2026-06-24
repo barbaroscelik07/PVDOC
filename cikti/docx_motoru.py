@@ -529,21 +529,25 @@ def _bicimle(metin):
 
 
 def _yaz_bos(cell, metin, bold=False):
+    from docx.shared import RGBColor
     p = cell.paragraphs[0]
     r = p.add_run(_bicimle(metin))
     r.bold = bold
     r.font.size = Pt(12)
     r.font.name = "Times New Roman"
+    r.font.color.rgb = RGBColor(0, 0, 0)
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
 def _yaz_sol(cell, metin, bold=False):
     """Sola dayalı hücre yazımı (Test/Spesifikasyon değer hücreleri için)."""
+    from docx.shared import RGBColor
     p = cell.paragraphs[0]
     r = p.add_run(str(metin))
     r.bold = bold
     r.font.size = Pt(12)
     r.font.name = "Times New Roman"
+    r.font.color.rgb = RGBColor(0, 0, 0)
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
 
@@ -1091,6 +1095,66 @@ def _norm_basit(s: str) -> str:
     return (s or "").translate(tr).lower()
 
 
+def _doldur_uretim_yontemi(doc, proje: ProjeVerisi) -> None:
+    """
+    Şablonda 'üretim prosesi ... açıklanmaktadır' ile 'Proses Akış Diyagramı'
+    arasındaki örnek Operasyon/Aşama paragraflarını siler, kullanıcının
+    yüklediği üretim adımlarıyla değiştirir.
+    """
+    adimlar = getattr(proje, "uretim_adimlari", None)
+    if not adimlar:
+        return
+    from docx.shared import Pt, RGBColor
+    govde = doc.element.body
+    paralar = list(doc.paragraphs)
+
+    bas_idx = son_idx = None
+    for i, p in enumerate(paralar):
+        t = p.text.strip().lower()
+        if bas_idx is None and "üretim prosesi" in t and "açıklan" in t:
+            bas_idx = i
+        elif bas_idx is not None and ("proses akış" in t or "proses akis" in t):
+            son_idx = i
+            break
+    if bas_idx is None or son_idx is None:
+        return
+
+    # bas_idx ile son_idx arasındaki paragrafları sil (sınırlar hariç)
+    silinecek = paralar[bas_idx + 1:son_idx]
+    for p in silinecek:
+        p._p.getparent().remove(p._p)
+
+    # Yeni içeriği 'üretim prosesi...' paragrafından SONRA ekle
+    capa = paralar[bas_idx]._p
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    def _yeni_para_ekle(sonra_el, metin, bold):
+        yp = OxmlElement("w:p")
+        sonra_el.addnext(yp)
+        from docx.text.paragraph import Paragraph
+        para = Paragraph(yp, paralar[bas_idx]._parent)
+        run = para.add_run(metin)
+        run.bold = bold
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(12)
+        run.font.color.rgb = RGBColor(0, 0, 0)
+        return yp
+
+    # Adımları ters sırada ekleyemeyiz; capa'yı ilerlet
+    son_el = capa
+    # boşluk paragrafı
+    son_el = _yeni_para_ekle(son_el, "", False)
+    for baslik, aciklama in adimlar:
+        son_el = _yeni_para_ekle(son_el, baslik, True)       # Operasyon X: Aşama Y (kalın)
+        son_el = _yeni_para_ekle(son_el, aciklama, False)    # açıklama
+        son_el = _yeni_para_ekle(son_el, "", False)          # boşluk
+
+
+def _doldur_uretim_yontemi_eski(doc, proje):
+    pass
+
+
 def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
     belgede_degistir(doc, _placeholder_eslemeleri(proje, rapor))
     _doldur_formul(doc, proje)
@@ -1098,6 +1162,18 @@ def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
     _doldur_risk(doc, proje)
     _doldur_proses_param(doc, proje)
     _doldur_ekipman(doc, proje)
+    _doldur_uretim_yontemi(doc, proje)
+    _doldur_spek(doc, proje)
+    _doldur_ipk(doc, proje)
+    _doldur_tablo89(doc, proje)
+    _doldur_numune(doc, proje)
+    belgede_degistir(doc, _placeholder_eslemeleri(proje, rapor))
+    _doldur_formul(doc, proje)
+    _doldur_kapsanan(doc, proje)
+    _doldur_risk(doc, proje)
+    _doldur_proses_param(doc, proje)
+    _doldur_ekipman(doc, proje)
+    _doldur_uretim_yontemi(doc, proje)
     _doldur_spek(doc, proje)
     _doldur_ipk(doc, proje)
     _doldur_tablo89(doc, proje)

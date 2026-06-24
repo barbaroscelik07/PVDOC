@@ -78,7 +78,7 @@ def hucre_yaz(cell, metin: str, bold: bool | None = None) -> None:
     fazla paragrafları siler (eski şablon içeriği kalmaz).
     bold None ise mevcut bold durumu korunur. Yeni run Times New Roman olur.
     """
-    from docx.shared import Pt as _Pt
+    from docx.shared import Pt as _Pt, RGBColor as _RGB
     p = cell.paragraphs[0]
     for ekstra in cell.paragraphs[1:]:
         ekstra._p.getparent().remove(ekstra._p)
@@ -91,10 +91,12 @@ def hucre_yaz(cell, metin: str, bold: bool | None = None) -> None:
         # font yine de Times New Roman'a sabitle (Calibri kaçaklarını önle)
         if not p.runs[0].font.name:
             p.runs[0].font.name = "Times New Roman"
+        p.runs[0].font.color.rgb = _RGB(0, 0, 0)  # her zaman siyah
     else:
         r = p.add_run(str(metin))
         r.font.name = "Times New Roman"
         r.font.size = _Pt(12)
+        r.font.color.rgb = _RGB(0, 0, 0)
         if bold is not None:
             r.bold = bold
 

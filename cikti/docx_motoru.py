@@ -98,24 +98,11 @@ def _seri_nolar(proje: ProjeVerisi) -> list[str]:
 
 def _tablo_genislik_duzelt(tablo):
     """
-    Şablonda tblW=0/auto olan tablolarda LibreOffice sütunları çökertir.
-    tblW'yi tblGrid toplamına (dxa) sabitler — fixed layout ile birlikte düzgün render.
+    Tablo yapısı (tcW/tblGrid) şablonda zaten doğru ve Word'de düzgün render
+    edilir. LibreOffice'in çok satırlı tablolardaki render bug'ı DOCX'i bozmaz;
+    bu yüzden burada yapısal değişiklik yapmıyoruz (Word çıktısı korunur).
     """
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
-    tbl = tablo._tbl
-    tblPr = tbl.tblPr
-    grid = tbl.find(qn('w:tblGrid'))
-    if grid is None:
-        return
-    toplam = sum(int(gc.get(qn('w:w'))) for gc in grid.findall(qn('w:gridCol'))
-                 if gc.get(qn('w:w')))
-    if not toplam:
-        return
-    tblW = tblPr.find(qn('w:tblW'))
-    if tblW is None:
-        tblW = OxmlElement('w:tblW'); tblPr.append(tblW)
-    tblW.set(qn('w:w'), str(toplam)); tblW.set(qn('w:type'), 'dxa')
+    return
 
 
 def _tablo_render_duzelt(tablo):
@@ -351,6 +338,7 @@ def _doldur_spek(doc, proje: ProjeVerisi) -> None:
         hucre_yaz(cells[1], op)
         hucre_yaz(cells[2], ad)
         hucre_yaz(cells[3], spek)
+    _tablo_genislik_duzelt(t)
     return
 
 
@@ -479,6 +467,7 @@ def _doldur_ipk(doc, proje: ProjeVerisi) -> None:
             hucre_yaz(cells[1], op)
             hucre_yaz(cells[2], ad)
             hucre_yaz(cells[3], spek)
+    _tablo_genislik_duzelt(t)
 
 
 # ============================================================================
@@ -1087,6 +1076,7 @@ def _doldur_tablo89(doc, proje: ProjeVerisi) -> None:
             cells = t.rows[ri].cells
             hucre_yaz(cells[0], sol)
             hucre_yaz(cells[-1], sag)
+        _tablo_genislik_duzelt(t)
 
 
 def _norm_basit(s: str) -> str:

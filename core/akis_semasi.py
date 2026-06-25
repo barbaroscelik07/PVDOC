@@ -83,22 +83,54 @@ def _aciklama_parcala(aciklama: str, bilinen: list[str]) -> list[list[str]]:
 
 
 def _parcada_madde_bul(parca: str, bilinen: list[str]) -> list[str]:
-    """Bir cümle parçasında hammadde isimlerini bulur."""
+    """Bir cümle parçasında hammadde isimlerini bulur ('(I. Kısım)' eki dahil)."""
     if not parca or not parca.strip():
         return []
+    import re as _re
     bulunan = []
     if bilinen:
-        # birim formülden gelen isimleri cümlede ara
-        kalan = parca
+        gorulen = set()
         for ad in bilinen:
-            if _re_ara(ad, kalan):
-                if ad not in bulunan:
-                    bulunan.append(ad)
-        # orijinal sıraya göre (cümledeki konum) sırala
-        bulunan.sort(key=lambda a: parca.lower().find(a.lower()))
-        return bulunan
-    # yedek: cümleden çıkar (büyük harfli kelime grupları)
+            # 1) birebir (veya küçük yazım farkıyla) konum bul
+            konum = _madde_konum(ad, parca)
+            if konum is None:
+                continue
+            kalan = parca[konum[1]:]
+            kisim = _re.match(r"\s*(\([IVX]+\.?\s*Kısım\))", kalan, _re.IGNORECASE)
+            tam_ad = ad + (" " + kisim.group(1) if kisim else "")
+            if tam_ad not in gorulen:
+                gorulen.add(tam_ad)
+                bulunan.append((konum[0], tam_ad))
+        bulunan.sort(key=lambda x: x[0])
+        return [ad for _, ad in bulunan]
     return _maddeleri_ayikla(parca)
+
+
+def _madde_konum(ad: str, parca: str):
+    """
+    Madde adının parçadaki (başlangıç, bitiş) konumunu döndürür.
+    Önce birebir arar; bulamazsa kelime-bazlı bulanık eşleşme dener
+    (küçük yazım farklarını tolere eder, örn. Slikon≈Silikon).
+    """
+    import re as _re
+    from difflib import SequenceMatcher
+    # 1) birebir (harf duyarsız)
+    m = _re.search(_re.escape(ad), parca, _re.IGNORECASE)
+    if m:
+        return (m.start(), m.end())
+    # 2) bulanık: ad'ın kelimelerini parçada kayan pencereyle ara
+    ad_kel = ad.split()
+    if not ad_kel:
+        return None
+    parca_kel = list(_re.finditer(r"\S+", parca))
+    n = len(ad_kel)
+    for i in range(len(parca_kel) - n + 1):
+        pencere = parca_kel[i:i + n]
+        metin = " ".join(p.group() for p in pencere)
+        oran = SequenceMatcher(None, ad.lower(), metin.lower()).ratio()
+        if oran >= 0.85:  # %85+ benzerlik → aynı madde say
+            return (pencere[0].start(), pencere[-1].end())
+    return None
 
 
 def _re_ara(ad: str, metin: str) -> bool:

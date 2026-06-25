@@ -1085,10 +1085,53 @@ def _norm_basit(s: str) -> str:
     return (s or "").translate(tr).lower()
 
 
+def _kutu_sekli_xml(metin, genislik_emu, yukseklik_emu, dolgu="D9E2F3", oklu=False):
+    """
+    Bir dikdörtgen kutu şekli (roundRect) + içinde ortalı metin üreten DrawingML
+    XML'i döndürür. Metin Word formatında (w:txbxContent içinde w:p) yazılır.
+    """
+    import html, random
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    sat = metin.split("\n")
+    paragraflar = ""
+    for s in sat:
+        paragraflar += (
+            f'<w:p xmlns:w="{W}"><w:pPr><w:jc w:val="center"/></w:pPr>'
+            '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>'
+            '<w:sz w:val="18"/><w:szCs w:val="18"/>'
+            '<w:color w:val="000000"/></w:rPr>'
+            f'<w:t xml:space="preserve">{html.escape(s)}</w:t></w:r></w:p>'
+        )
+    sid = random.randint(1000, 9999999)
+    return (
+        f'<w:r xmlns:w="{W}">'
+        '<w:rPr/><w:drawing>'
+        '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'distT="0" distB="0" distL="0" distR="0">'
+        f'<wp:extent cx="{genislik_emu}" cy="{yukseklik_emu}"/>'
+        f'<wp:docPr id="{sid}" name="kutu{sid}"/>'
+        '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
+        '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
+        '<wps:cNvSpPr/><wps:spPr>'
+        f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="{genislik_emu}" cy="{yukseklik_emu}"/></a:xfrm>'
+        '<a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom>'
+        f'<a:solidFill><a:srgbClr val="{dolgu}"/></a:solidFill>'
+        '<a:ln w="9525"><a:solidFill><a:srgbClr val="2E4D7B"/></a:solidFill></a:ln>'
+        '</wps:spPr><wps:txbx><w:txbxContent>'
+        + paragraflar +
+        '</w:txbxContent></wps:txbx>'
+        '<wps:bodyPr rot="0" anchor="ctr" anchorCtr="1" lIns="36000" tIns="18000" '
+        'rIns="36000" bIns="18000"/>'
+        '</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>'
+    )
+
+
 def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
     """
-    'Proses Akış Diyagramı' başlığı altına 4 sütunlu akış şemasını çizer:
-    Hammaddeler | Operasyon kutusu (↓ oklu) | IPK testleri | Kimyasal analizler.
+    'Proses Akış Diyagramı' başlığı altına 4 sütunlu akış şeması çizer.
+    Önce şablondaki eski (textbox'lı örnek) şemayı siler.
+    Sütunlar: Hammaddeler | Operasyon kutuları (şekil + ↓ ok) | İPK | Kimyasal.
     """
     try:
         from core.akis_semasi import akis_semasi_hazirla
@@ -1099,14 +1142,15 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
         return
     from docx.shared import Pt, RGBColor
     from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
+    from docx.oxml import OxmlElement, parse_xml
     from docx.text.paragraph import Paragraph
+    from docx.table import Table
 
-    # 'Proses Akış Diyagramı' başlığını bul
     paralar = list(doc.paragraphs)
     bas_idx = None
     for i, p in enumerate(paralar):
-        if "proses akış" in p.text.strip().lower() or "akış diyagram" in p.text.strip().lower():
+        tx = p.text.strip().lower()
+        if "proses akış" in tx or "akış diyagram" in tx:
             bas_idx = i
             break
     if bas_idx is None:
@@ -1114,6 +1158,101 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
 
     capa = paralar[bas_idx]._p
     capa_parent = paralar[bas_idx]._parent
+
+    # --- Eski şablon şemasını sil (başlıktan sonraki textbox'lı tablo) ---
+    el = capa.getnext()
+    while el is not None:
+        if el.tag.endswith("}tbl"):
+            txbx = el.findall(".//" + qn("w:txbxContent"))
+            if len(txbx) > 5:  # eski şema (çok textbox)
+                sil = el; el = el.getnext()
+                sil.getparent().remove(sil)
+                continue
+            else:
+                break  # başka tablo (örn. yeni eklediğimiz) — dur
+        elif el.tag.endswith("}p"):
+            ptxt = "".join(el.itertext()).strip().lower()
+            # bir sonraki ana başlığa gelince dur
+            if ptxt and ("tablo" in ptxt or "kapsanan" in ptxt or "risk" in ptxt):
+                break
+        el = el.getnext()
+
+    def _hucre_yaz(cell, satirlar, *, bold=False, ortala=True):
+        va = OxmlElement("w:vAlign"); va.set(qn("w:val"), "center")
+        cell._tc.get_or_add_tcPr().append(va)
+        ilk = True
+        for metin in satirlar:
+            p = cell.paragraphs[0] if ilk else cell.add_paragraph()
+            ilk = False
+            if ortala:
+                p.alignment = 1
+            run = p.add_run(metin)
+            run.bold = bold
+            run.font.name = "Times New Roman"
+            run.font.size = Pt(9)
+            run.font.color.rgb = RGBColor(0, 0, 0)
+
+    def _kutu_ciz(cell, metin, oklu):
+        """Hücreye dikdörtgen şekil kutusu + (oklu ise) altına aşağı ok ekler."""
+        p = cell.paragraphs[0]
+        p.alignment = 1
+        xml = _kutu_sekli_xml(metin, 1500000, 460000)
+        p._p.append(parse_xml(xml))
+        if oklu:
+            po = cell.add_paragraph(); po.alignment = 1
+            r = po.add_run("↓")
+            r.font.name = "Times New Roman"; r.font.size = Pt(14)
+            r.font.color.rgb = RGBColor(0, 0, 0)
+
+    # --- Tablo iskeleti (kenarlıksız) ---
+    tbl = OxmlElement("w:tbl")
+    tblPr = OxmlElement("w:tblPr")
+    st = OxmlElement("w:tblStyle"); st.set(qn("w:val"), "TableGrid"); tblPr.append(st)
+    jc = OxmlElement("w:jc"); jc.set(qn("w:val"), "center"); tblPr.append(jc)
+    tblW = OxmlElement("w:tblW"); tblW.set(qn("w:w"), "0"); tblW.set(qn("w:type"), "auto")
+    tblPr.append(tblW)
+    borders = OxmlElement("w:tblBorders")
+    for kenar in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        b = OxmlElement(f"w:{kenar}"); b.set(qn("w:val"), "none"); borders.append(b)
+    tblPr.append(borders)
+    tbl.append(tblPr)
+    grid = OxmlElement("w:tblGrid")
+    for w in (2500, 2400, 2200, 2200):
+        gc = OxmlElement("w:gridCol"); gc.set(qn("w:w"), str(w)); grid.append(gc)
+    tbl.append(grid)
+    capa.addnext(tbl)
+    tablo = Table(tbl, capa_parent)
+
+    # başlık satırı
+    bsr = tablo.add_row().cells
+    _hucre_yaz(bsr[0], ["Hammaddeler"], bold=True)
+    _hucre_yaz(bsr[1], ["Üretim Aşaması"], bold=True)
+    _hucre_yaz(bsr[2], ["İPK Testleri"], bold=True)
+    _hucre_yaz(bsr[3], ["Kimyasal Analizler"], bold=True)
+
+    for ki, k in enumerate(kutular):
+        cells = tablo.add_row().cells
+        ham = ["- " + h for h in k["hammaddeler"]] if k["hammaddeler"] else [""]
+        _hucre_yaz(cells[0], ham, ortala=False)
+        _kutu_ciz(cells[1], k["operasyon"], oklu=(ki < len(kutular) - 1))
+        ipk = ["- " + t for t in k["ipk_testleri"]] if k["ipk_testleri"] else [""]
+        _hucre_yaz(cells[2], ipk, ortala=False)
+        kim = ["- " + t for t in k["kimyasal_testler"]] if k["kimyasal_testler"] else [""]
+        _hucre_yaz(cells[3], kim, ortala=False)
+
+
+def _doldur_akis_semasi_ESKI(doc, proje: ProjeVerisi) -> None:
+    return
+    # (eski kod aşağıda kullanılmıyor)
+    from docx.shared import Pt, RGBColor
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.text.paragraph import Paragraph
+    kutular = []
+    paralar = list(doc.paragraphs)
+    bas_idx = None
+    capa = paralar[0]._p
+    capa_parent = paralar[0]._parent
 
     def _hucre_yaz(cell, satirlar, *, bold=False, ortala=True, kutu=False):
         """Bir tablo hücresine metin(ler) yazar; kutu=True ise gölgeli/kenarlıklı."""

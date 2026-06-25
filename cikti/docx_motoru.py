@@ -1085,6 +1085,104 @@ def _norm_basit(s: str) -> str:
     return (s or "").translate(tr).lower()
 
 
+def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
+    """
+    'Proses Akış Diyagramı' başlığı altına 4 sütunlu akış şemasını çizer:
+    Hammaddeler | Operasyon kutusu (↓ oklu) | IPK testleri | Kimyasal analizler.
+    """
+    try:
+        from core.akis_semasi import akis_semasi_hazirla
+        kutular = akis_semasi_hazirla(proje)
+    except Exception:
+        kutular = []
+    if not kutular:
+        return
+    from docx.shared import Pt, RGBColor
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.text.paragraph import Paragraph
+
+    # 'Proses Akış Diyagramı' başlığını bul
+    paralar = list(doc.paragraphs)
+    bas_idx = None
+    for i, p in enumerate(paralar):
+        if "proses akış" in p.text.strip().lower() or "akış diyagram" in p.text.strip().lower():
+            bas_idx = i
+            break
+    if bas_idx is None:
+        return
+
+    capa = paralar[bas_idx]._p
+    capa_parent = paralar[bas_idx]._parent
+
+    def _hucre_yaz(cell, satirlar, *, bold=False, ortala=True, kutu=False):
+        """Bir tablo hücresine metin(ler) yazar; kutu=True ise gölgeli/kenarlıklı."""
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        if kutu:
+            shd = OxmlElement("w:shd"); shd.set(qn("w:val"), "clear")
+            shd.set(qn("w:fill"), "D9E2F3"); tcPr.append(shd)  # açık mavi kutu
+        va = OxmlElement("w:vAlign"); va.set(qn("w:val"), "center"); tcPr.append(va)
+        ilk = True
+        for metin in satirlar:
+            if ilk:
+                p = cell.paragraphs[0]; ilk = False
+            else:
+                p = cell.add_paragraph()
+            if ortala:
+                p.alignment = 1
+            run = p.add_run(metin)
+            run.bold = bold
+            run.font.name = "Times New Roman"
+            run.font.size = Pt(10 if not kutu else 11)
+            run.font.color.rgb = RGBColor(0, 0, 0)
+
+    # Tablo: her aşama için 1 satır (operasyon kutusu) + ok satırı
+    n_satir = len(kutular)
+    tbl = OxmlElement("w:tbl")
+    tblPr = OxmlElement("w:tblPr")
+    st = OxmlElement("w:tblStyle"); st.set(qn("w:val"), "TableGrid"); tblPr.append(st)
+    jc = OxmlElement("w:jc"); jc.set(qn("w:val"), "center"); tblPr.append(jc)
+    tblW = OxmlElement("w:tblW"); tblW.set(qn("w:w"), "0"); tblW.set(qn("w:type"), "auto")
+    tblPr.append(tblW)
+    # sadece iç kenarlık yok; kutuları hücre gölgesiyle göstereceğiz
+    borders = OxmlElement("w:tblBorders")
+    for kenar in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        b = OxmlElement(f"w:{kenar}")
+        b.set(qn("w:val"), "none"); borders.append(b)
+    tblPr.append(borders)
+    tbl.append(tblPr)
+    grid = OxmlElement("w:tblGrid")
+    for w in (2600, 2200, 2300, 2300):  # Hammadde | Operasyon | IPK | Kimyasal
+        gc = OxmlElement("w:gridCol"); gc.set(qn("w:w"), str(w)); grid.append(gc)
+    tbl.append(grid)
+
+    from docx.table import Table
+    capa.addnext(tbl)
+    tablo = Table(tbl, capa_parent)
+    # başlık satırı
+    bsr = tablo.add_row().cells
+    _hucre_yaz(bsr[0], ["Hammaddeler"], bold=True)
+    _hucre_yaz(bsr[1], ["Üretim Aşaması"], bold=True)
+    _hucre_yaz(bsr[2], ["İPK Testleri"], bold=True)
+    _hucre_yaz(bsr[3], ["Kimyasal Analizler"], bold=True)
+
+    for ki, k in enumerate(kutular):
+        cells = tablo.add_row().cells
+        # sol: hammaddeler
+        ham = ["- " + h for h in k["hammaddeler"]] if k["hammaddeler"] else [""]
+        _hucre_yaz(cells[0], ham, ortala=False)
+        # orta: operasyon kutusu (gölgeli) + alt ok
+        ok = " ↓" if ki < len(kutular) - 1 else ""
+        _hucre_yaz(cells[1], [k["operasyon"] + ok], bold=True, kutu=True)
+        # sağ: IPK testleri (sadece ipk işaretliyse)
+        ipk = ["- " + t for t in k["ipk_testleri"]] if k["ipk_testleri"] else [""]
+        _hucre_yaz(cells[2], ipk, ortala=False)
+        # sağ: kimyasal
+        kim = ["- " + t for t in k["kimyasal_testler"]] if k["kimyasal_testler"] else [""]
+        _hucre_yaz(cells[3], kim, ortala=False)
+
+
 def _doldur_uretim_yontemi(doc, proje: ProjeVerisi) -> None:
     """
     Şablonda 'üretim prosesi ... açıklanmaktadır' ile 'Proses Akış Diyagramı'
@@ -1206,6 +1304,7 @@ def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
     _doldur_proses_param(doc, proje)
     _doldur_ekipman(doc, proje)
     _doldur_uretim_yontemi(doc, proje)
+    _doldur_akis_semasi(doc, proje)
     _doldur_spek(doc, proje)
     _doldur_ipk(doc, proje)
     _doldur_tablo89(doc, proje)
@@ -1217,6 +1316,7 @@ def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
     _doldur_proses_param(doc, proje)
     _doldur_ekipman(doc, proje)
     _doldur_uretim_yontemi(doc, proje)
+    _doldur_akis_semasi(doc, proje)
     _doldur_spek(doc, proje)
     _doldur_ipk(doc, proje)
     _doldur_tablo89(doc, proje)

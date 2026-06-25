@@ -20,8 +20,10 @@ _OP_DESEN = re.compile(r"^\s*operasyon\s*\d+\s*[:：]\s*aşama\s*\d+\s*$", re.IG
 
 # Üretim yönteminin bittiği yer
 _BITIS = ("üretim akış", "uretim akis", "akış şeması", "akis semasi",
-          "proses akış", "proses akis", "in-proses", "i̇n-proses",
-          "in proses", "kapsanan ürünler")
+          "proses akış", "proses akis", "prosesakış", "prosesakis",
+          "in-proses", "i̇n-proses", "in proses",
+          "proses validasyonu serilerinde", "stabilite analiz",
+          "kapsanan ürünler")
 
 # Açıklamadan atılacak ara başlık desenleri ("2. Karışımın Hazırlanması", "3. Tablet baskı")
 _ARA_BASLIK = re.compile(r"\s*\d+\.\s*(karışımın hazırlanması|tablet baskı|"
@@ -36,7 +38,18 @@ def _norm(s: str) -> str:
 
 
 def _aciklama_temizle(metin: str) -> str:
-    """Açıklamadan bir sonraki bölüm ara başlıklarını atar."""
+    """Açıklamadan bir sonraki bölüm ara başlıklarını ve taşan metni atar."""
+    # Açıklama içinde bitiş kelimesi varsa oradan kes (paragraf taşması)
+    n = metin.lower()
+    kes_noktalari = []
+    for kelime in ("prosesakış", "proses akış", "proses akis", "üretim akış",
+                   "* proses validasyonu", "proses validasyonu serilerinde",
+                   "tablo 6", "tablo 7", "in-proses"):
+        idx = n.find(kelime)
+        if idx > 0:
+            kes_noktalari.append(idx)
+    if kes_noktalari:
+        metin = metin[:min(kes_noktalari)]
     metin = _ARA_BASLIK.sub(" ", metin)
     return re.sub(r"\s+", " ", metin).strip()
 

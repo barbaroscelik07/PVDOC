@@ -27,18 +27,83 @@ _OP_SIRA = [
 def _hammadde_kutulari(proje) -> list[str]:
     """
     Üretim yöntemi açıklamalarından hammadde kutularını çıkarır.
-    Her aşamada işlem gören hammadde grubu ayrı bir kutu olur.
-    Hammaddesi olmayan aşama atlanır.
-    Dönüş: ["Parasetamol", "Kafein\\nMısır Nişastası\\n...", "Stearik asit", ...]
+    Her aşama cümlesi işlem fiiline göre parçalanır (konteynıra alınır / elenerek /
+    çözülerek); her parçadaki hammaddeler ayrı kutu olur.
+    Hammadde isimleri öncelikle proje.hammaddeler listesinden, yoksa cümleden gelir.
     """
     adimlar = getattr(proje, "uretim_adimlari", None) or []
+    bilinen = _bilinen_hammaddeler(proje)  # birim formülden gelen isimler
+
     kutular = []
     for adim in adimlar:
         aciklama = adim[1] if len(adim) > 1 else ""
-        maddeler = _maddeleri_ayikla(aciklama)
-        if maddeler:
-            kutular.append("\n".join("- " + m for m in maddeler))
+        for grup in _aciklama_parcala(aciklama, bilinen):
+            if grup:
+                kutular.append("\n".join("- " + m for m in grup))
     return kutular
+
+
+def _bilinen_hammaddeler(proje) -> list[str]:
+    """proje.hammaddeler listesindeki hammadde adlarını döndürür (uzundan kısaya)."""
+    out = []
+    for h in (getattr(proje, "hammaddeler", None) or []):
+        ad = (getattr(h, "ad", "") or "").strip()
+        if ad and ad.lower() not in ("u.y.", "uy", "ara toplam", "toplam"):
+            out.append(ad)
+    # uzun isimler önce eşleşsin (kısmi eşleşmeleri önlemek için)
+    out.sort(key=len, reverse=True)
+    return out
+
+
+# İşlem fiili sınır kelimeleri — cümleyi bu noktalardan ayrı kutulara böler
+_ISLEM_SINIR = ("elenerek", "çözülerek", "ilave edil", "konteynıra alın",
+                "konteynera alın")
+
+
+def _aciklama_parcala(aciklama: str, bilinen: list[str]) -> list[list[str]]:
+    """
+    Bir aşama açıklamasını işlem fiillerine göre parçalara böler ve her parçadaki
+    hammaddeleri (bilinen listeden veya cümleden) gruplar halinde döndürür.
+    """
+    if not aciklama:
+        return []
+    # cümleyi işlem fiili sınırlarında parçala (sınır kelimesi parçanın sonunda kalır)
+    import re as _re
+    desen = "(" + "|".join(_ISLEM_SINIR) + ")"
+    parcalar_ham = _re.split(desen, aciklama, flags=_re.IGNORECASE)
+    # split sonrası: [metin, sinir, metin, sinir, ...] — metin parçalarını al
+    metin_parcalari = [parcalar_ham[i] for i in range(0, len(parcalar_ham), 2)]
+
+    gruplar = []
+    for parca in metin_parcalari:
+        maddeler = _parcada_madde_bul(parca, bilinen)
+        if maddeler:
+            gruplar.append(maddeler)
+    return gruplar
+
+
+def _parcada_madde_bul(parca: str, bilinen: list[str]) -> list[str]:
+    """Bir cümle parçasında hammadde isimlerini bulur."""
+    if not parca or not parca.strip():
+        return []
+    bulunan = []
+    if bilinen:
+        # birim formülden gelen isimleri cümlede ara
+        kalan = parca
+        for ad in bilinen:
+            if _re_ara(ad, kalan):
+                if ad not in bulunan:
+                    bulunan.append(ad)
+        # orijinal sıraya göre (cümledeki konum) sırala
+        bulunan.sort(key=lambda a: parca.lower().find(a.lower()))
+        return bulunan
+    # yedek: cümleden çıkar (büyük harfli kelime grupları)
+    return _maddeleri_ayikla(parca)
+
+
+def _re_ara(ad: str, metin: str) -> bool:
+    import re as _re
+    return _re.search(_re.escape(ad), metin, _re.IGNORECASE) is not None
 
 
 # Hammadde olmayan, cümlede geçen ama madde sayılmayacak kelimeler

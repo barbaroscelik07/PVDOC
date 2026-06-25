@@ -1096,9 +1096,10 @@ def _kutu_sekli_xml(metin, genislik_emu, yukseklik_emu, dolgu="D9E2F3", oklu=Fal
     paragraflar = ""
     for s in sat:
         paragraflar += (
-            f'<w:p xmlns:w="{W}"><w:pPr><w:jc w:val="center"/></w:pPr>'
+            f'<w:p xmlns:w="{W}"><w:pPr><w:jc w:val="center"/>'
+            '<w:spacing w:after="0" w:line="200" w:lineRule="exact"/></w:pPr>'
             '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>'
-            '<w:sz w:val="18"/><w:szCs w:val="18"/>'
+            '<w:sz w:val="14"/><w:szCs w:val="14"/>'
             '<w:color w:val="000000"/></w:rPr>'
             f'<w:t xml:space="preserve">{html.escape(s)}</w:t></w:r></w:p>'
         )
@@ -1116,13 +1117,13 @@ def _kutu_sekli_xml(metin, genislik_emu, yukseklik_emu, dolgu="D9E2F3", oklu=Fal
         '<wps:cNvSpPr/><wps:spPr>'
         f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="{genislik_emu}" cy="{yukseklik_emu}"/></a:xfrm>'
         '<a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom>'
-        f'<a:solidFill><a:srgbClr val="{dolgu}"/></a:solidFill>'
-        '<a:ln w="9525"><a:solidFill><a:srgbClr val="2E4D7B"/></a:solidFill></a:ln>'
+        '<a:noFill/>'
+        '<a:ln w="6350"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>'
         '</wps:spPr><wps:txbx><w:txbxContent>'
         + paragraflar +
         '</w:txbxContent></wps:txbx>'
-        '<wps:bodyPr rot="0" anchor="ctr" anchorCtr="1" lIns="36000" tIns="18000" '
-        'rIns="36000" bIns="18000"/>'
+        '<wps:bodyPr rot="0" anchor="ctr" anchorCtr="1" lIns="18000" tIns="9000" '
+        'rIns="18000" bIns="9000"/>'
         '</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>'
     )
 
@@ -1192,19 +1193,23 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
             run.font.size = Pt(9)
             run.font.color.rgb = RGBColor(0, 0, 0)
 
-    def _kutu_paragraf(cell, metin, dolgu, ilk):
-        """Hücreye bir şekil-kutu ekler (yeni paragrafta). ilk değilse önce ok."""
-        if not ilk:
+    def _kutu_paragraf(cell, metin, ilk, oklu=True):
+        """Hücreye bir şekil-kutu ekler. oklu=True ve ilk değilse önce ↓ ok."""
+        if not ilk and oklu:
             po = cell.add_paragraph(); po.alignment = 1
+            po.paragraph_format.space_before = Pt(0)
+            po.paragraph_format.space_after = Pt(0)
             r = po.add_run("↓")
-            r.font.name = "Times New Roman"; r.font.size = Pt(13)
+            r.font.name = "Times New Roman"; r.font.size = Pt(12)
             r.font.color.rgb = RGBColor(0, 0, 0)
         p = cell.add_paragraph() if (cell.paragraphs[0].runs or not ilk) else cell.paragraphs[0]
         p.alignment = 1
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(2)
         # kutu yüksekliğini içerik satır sayısına göre ayarla
         satir_say = max(1, metin.count("\n") + 1)
-        yuk = 360000 + (satir_say - 1) * 175000
-        xml = _kutu_sekli_xml(metin, 1900000, yuk, dolgu=dolgu)
+        yuk = 300000 + (satir_say - 1) * 150000
+        xml = _kutu_sekli_xml(metin, 1330000, yuk, dolgu=None)
         p._p.append(parse_xml(xml))
 
     # --- Tablo iskeleti (kenarlıksız, tek satır) ---
@@ -1242,14 +1247,14 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
 
     n = len(kutular)
     for i, k in enumerate(kutular):
-        # Sütun 1: operasyon kutusu (mavi)
-        _kutu_paragraf(cells[1], k["operasyon"], "BDD7EE", ilk=(i == 0))
-        # Sütun 2: IPK testleri kutusu (açık gri)
+        # Sütun 1: operasyon kutusu — aralarında ↓ ok
+        _kutu_paragraf(cells[1], k["operasyon"], ilk=(i == 0), oklu=True)
+        # Sütun 2: IPK testleri kutusu — ok YOK
         ipk_metin = "\n".join(k["ipk_testleri"]) if k["ipk_testleri"] else "—"
-        _kutu_paragraf(cells[2], ipk_metin, "F2F2F2", ilk=(i == 0))
-        # Sütun 3: kimyasal kutusu (açık gri)
+        _kutu_paragraf(cells[2], ipk_metin, ilk=(i == 0), oklu=False)
+        # Sütun 3: kimyasal kutusu — ok YOK
         kim_metin = "\n".join(k["kimyasal_testler"]) if k["kimyasal_testler"] else "—"
-        _kutu_paragraf(cells[3], kim_metin, "F2F2F2", ilk=(i == 0))
+        _kutu_paragraf(cells[3], kim_metin, ilk=(i == 0), oklu=False)
     # Hammaddeler sütunu (0) şimdilik boş — kullanıcı sonra anlatacak
 
 

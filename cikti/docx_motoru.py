@@ -1096,7 +1096,7 @@ def _kutu_sekli_xml(metin, genislik_emu, yukseklik_emu, dolgu="D9E2F3", oklu=Fal
     paragraflar = ""
     for s in sat:
         paragraflar += (
-            f'<w:p xmlns:w="{W}"><w:pPr><w:jc w:val="center"/>'
+            f'<w:p xmlns:w="{W}"><w:pPr><w:jc w:val="left"/>'
             '<w:spacing w:after="0" w:line="200" w:lineRule="exact"/></w:pPr>'
             '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>'
             '<w:sz w:val="14"/><w:szCs w:val="14"/>'
@@ -1122,7 +1122,7 @@ def _kutu_sekli_xml(metin, genislik_emu, yukseklik_emu, dolgu="D9E2F3", oklu=Fal
         '</wps:spPr><wps:txbx><w:txbxContent>'
         + paragraflar +
         '</w:txbxContent></wps:txbx>'
-        '<wps:bodyPr rot="0" anchor="ctr" anchorCtr="1" lIns="18000" tIns="9000" '
+        '<wps:bodyPr rot="0" anchor="ctr" anchorCtr="0" lIns="36000" tIns="9000" '
         'rIns="18000" bIns="9000"/>'
         '</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>'
     )
@@ -1136,9 +1136,12 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
     """
     try:
         from core.akis_semasi import akis_semasi_hazirla
-        kutular = akis_semasi_hazirla(proje)
+        veri = akis_semasi_hazirla(proje)
+        kutular = veri.get("operasyonlar", [])
+        hammadde_kutu = veri.get("hammaddeler", [])
     except Exception:
         kutular = []
+        hammadde_kutu = []
     if not kutular:
         return
     from docx.shared import Pt, RGBColor
@@ -1160,21 +1163,54 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
     capa = paralar[bas_idx]._p
     capa_parent = paralar[bas_idx]._parent
 
-    # --- Eski şablon şemasını sil (başlıktan sonraki textbox'lı tablo) ---
+    # --- Başlık öncesine sayfa sonu ekle (akış şeması sayfa başından başlasın) ---
+    from docx.enum.text import WD_BREAK
+    onceki = capa.getprevious()
+    # zaten sayfa sonu yoksa ekle
+    pb = OxmlElement("w:p")
+    r_pb = OxmlElement("w:r")
+    br = OxmlElement("w:br"); br.set(qn("w:type"), "page")
+    r_pb.append(br); pb.append(r_pb)
+    capa.addprevious(pb)
+
+    # --- Eski şema şekillerini sil (başlık paragrafı + sonraki paragraflardaki
+    #     drawing/pict öğeleri; metin korunur) ---
+    def _sekilleri_temizle(p_el):
+        for tag in ("w:drawing", "w:pict"):
+            for d in p_el.findall(".//" + qn(tag)):
+                # drawing/pict bir w:r içinde; tüm run'ı kaldır
+                r = d.getparent()
+                while r is not None and not r.tag.endswith("}r"):
+                    r = r.getparent()
+                if r is not None and r.getparent() is not None:
+                    r.getparent().remove(r)
+                elif d.getparent() is not None:
+                    d.getparent().remove(d)
+
+    _sekilleri_temizle(capa)  # başlık paragrafındaki eski şekiller
+
     el = capa.getnext()
-    while el is not None:
+    sayac = 0
+    while el is not None and sayac < 8:
+        sayac += 1
         if el.tag.endswith("}tbl"):
             txbx = el.findall(".//" + qn("w:txbxContent"))
-            if len(txbx) > 5:  # eski şema (çok textbox)
+            drawing = el.findall(".//" + qn("w:drawing"))
+            pict = el.findall(".//" + qn("w:pict"))
+            if len(txbx) > 3 or len(drawing) > 3 or len(pict) > 3:
                 sil = el; el = el.getnext()
                 sil.getparent().remove(sil)
                 continue
             else:
-                break  # başka tablo (örn. yeni eklediğimiz) — dur
+                break
         elif el.tag.endswith("}p"):
             ptxt = "".join(el.itertext()).strip().lower()
-            # bir sonraki ana başlığa gelince dur
-            if ptxt and ("tablo" in ptxt or "kapsanan" in ptxt or "risk" in ptxt):
+            draw = el.findall(".//" + qn("w:drawing"))
+            pict = el.findall(".//" + qn("w:pict"))
+            if draw or pict:
+                _sekilleri_temizle(el)  # paragraftaki eski şekilleri sil
+            if ptxt and ("tablo" in ptxt or "kapsanan" in ptxt or "risk" in ptxt
+                         or "stabilite" in ptxt):
                 break
         el = el.getnext()
 
@@ -1193,7 +1229,7 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
             run.font.size = Pt(9)
             run.font.color.rgb = RGBColor(0, 0, 0)
 
-    def _kutu_paragraf(cell, metin, ilk, oklu=True):
+    def _kutu_paragraf(cell, metin, ilk, oklu=True, sag_ok=False):
         """Hücreye bir şekil-kutu ekler. oklu=True ve ilk değilse önce ↓ ok."""
         if not ilk and oklu:
             po = cell.add_paragraph(); po.alignment = 1
@@ -1221,7 +1257,10 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
     tblPr.append(tblW)
     borders = OxmlElement("w:tblBorders")
     for kenar in ("top", "left", "bottom", "right", "insideH", "insideV"):
-        b = OxmlElement(f"w:{kenar}"); b.set(qn("w:val"), "none"); borders.append(b)
+        b = OxmlElement(f"w:{kenar}")
+        b.set(qn("w:val"), "single"); b.set(qn("w:sz"), "4")
+        b.set(qn("w:space"), "0"); b.set(qn("w:color"), "000000")
+        borders.append(b)
     tblPr.append(borders)
     tbl.append(tblPr)
     grid = OxmlElement("w:tblGrid")
@@ -1247,15 +1286,18 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
 
     n = len(kutular)
     for i, k in enumerate(kutular):
-        # Sütun 1: operasyon kutusu — aralarında ↓ ok
+        # Sütun 1: operasyon kutusu — aralarında ↓ ok (önek YOK)
         _kutu_paragraf(cells[1], k["operasyon"], ilk=(i == 0), oklu=True)
-        # Sütun 2: IPK testleri kutusu — ok YOK
-        ipk_metin = "\n".join(k["ipk_testleri"]) if k["ipk_testleri"] else "—"
-        _kutu_paragraf(cells[2], ipk_metin, ilk=(i == 0), oklu=False)
-        # Sütun 3: kimyasal kutusu — ok YOK
-        kim_metin = "\n".join(k["kimyasal_testler"]) if k["kimyasal_testler"] else "—"
+        # Sütun 2: IPK testleri kutusu — "- " önekli, ok YOK
+        ipk_metin = "\n".join("- " + t for t in k["ipk_testleri"]) if k["ipk_testleri"] else "—"
+        _kutu_paragraf(cells[2], ipk_metin, ilk=(i == 0), oklu=False, sag_ok=True)
+        # Sütun 3: kimyasal kutusu — "- " önekli, ok YOK
+        kim_metin = "\n".join("- " + t for t in k["kimyasal_testler"]) if k["kimyasal_testler"] else "—"
         _kutu_paragraf(cells[3], kim_metin, ilk=(i == 0), oklu=False)
-    # Hammaddeler sütunu (0) şimdilik boş — kullanıcı sonra anlatacak
+
+    # Sütun 0: Hammaddeler — "- " önek zaten veri motorunda eklendi
+    for j, ham in enumerate(hammadde_kutu):
+        _kutu_paragraf(cells[0], ham, ilk=(j == 0), oklu=False)
 
 
 def _doldur_akis_semasi_ESKI(doc, proje: ProjeVerisi) -> None:

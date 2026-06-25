@@ -1192,19 +1192,22 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
             run.font.size = Pt(9)
             run.font.color.rgb = RGBColor(0, 0, 0)
 
-    def _kutu_ciz(cell, metin, oklu):
-        """Hücreye dikdörtgen şekil kutusu + (oklu ise) altına aşağı ok ekler."""
-        p = cell.paragraphs[0]
-        p.alignment = 1
-        xml = _kutu_sekli_xml(metin, 1500000, 460000)
-        p._p.append(parse_xml(xml))
-        if oklu:
+    def _kutu_paragraf(cell, metin, dolgu, ilk):
+        """Hücreye bir şekil-kutu ekler (yeni paragrafta). ilk değilse önce ok."""
+        if not ilk:
             po = cell.add_paragraph(); po.alignment = 1
             r = po.add_run("↓")
-            r.font.name = "Times New Roman"; r.font.size = Pt(14)
+            r.font.name = "Times New Roman"; r.font.size = Pt(13)
             r.font.color.rgb = RGBColor(0, 0, 0)
+        p = cell.add_paragraph() if (cell.paragraphs[0].runs or not ilk) else cell.paragraphs[0]
+        p.alignment = 1
+        # kutu yüksekliğini içerik satır sayısına göre ayarla
+        satir_say = max(1, metin.count("\n") + 1)
+        yuk = 360000 + (satir_say - 1) * 175000
+        xml = _kutu_sekli_xml(metin, 1900000, yuk, dolgu=dolgu)
+        p._p.append(parse_xml(xml))
 
-    # --- Tablo iskeleti (kenarlıksız) ---
+    # --- Tablo iskeleti (kenarlıksız, tek satır) ---
     tbl = OxmlElement("w:tbl")
     tblPr = OxmlElement("w:tblPr")
     st = OxmlElement("w:tblStyle"); st.set(qn("w:val"), "TableGrid"); tblPr.append(st)
@@ -1217,7 +1220,7 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
     tblPr.append(borders)
     tbl.append(tblPr)
     grid = OxmlElement("w:tblGrid")
-    for w in (2500, 2400, 2200, 2200):
+    for w in (2300, 2300, 2300, 2300):
         gc = OxmlElement("w:gridCol"); gc.set(qn("w:w"), str(w)); grid.append(gc)
     tbl.append(grid)
     capa.addnext(tbl)
@@ -1230,15 +1233,24 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
     _hucre_yaz(bsr[2], ["İPK Testleri"], bold=True)
     _hucre_yaz(bsr[3], ["Kimyasal Analizler"], bold=True)
 
-    for ki, k in enumerate(kutular):
-        cells = tablo.add_row().cells
-        ham = ["- " + h for h in k["hammaddeler"]] if k["hammaddeler"] else [""]
-        _hucre_yaz(cells[0], ham, ortala=False)
-        _kutu_ciz(cells[1], k["operasyon"], oklu=(ki < len(kutular) - 1))
-        ipk = ["- " + t for t in k["ipk_testleri"]] if k["ipk_testleri"] else [""]
-        _hucre_yaz(cells[2], ipk, ortala=False)
-        kim = ["- " + t for t in k["kimyasal_testler"]] if k["kimyasal_testler"] else [""]
-        _hucre_yaz(cells[3], kim, ortala=False)
+    # TEK içerik satırı: her hücrede dikey şekil-kutular
+    cells = tablo.add_row().cells
+    for ust_cell in cells:
+        # üst hizalama (kutular yukarıdan başlasın)
+        va = OxmlElement("w:vAlign"); va.set(qn("w:val"), "top")
+        ust_cell._tc.get_or_add_tcPr().append(va)
+
+    n = len(kutular)
+    for i, k in enumerate(kutular):
+        # Sütun 1: operasyon kutusu (mavi)
+        _kutu_paragraf(cells[1], k["operasyon"], "BDD7EE", ilk=(i == 0))
+        # Sütun 2: IPK testleri kutusu (açık gri)
+        ipk_metin = "\n".join(k["ipk_testleri"]) if k["ipk_testleri"] else "—"
+        _kutu_paragraf(cells[2], ipk_metin, "F2F2F2", ilk=(i == 0))
+        # Sütun 3: kimyasal kutusu (açık gri)
+        kim_metin = "\n".join(k["kimyasal_testler"]) if k["kimyasal_testler"] else "—"
+        _kutu_paragraf(cells[3], kim_metin, "F2F2F2", ilk=(i == 0))
+    # Hammaddeler sütunu (0) şimdilik boş — kullanıcı sonra anlatacak
 
 
 def _doldur_akis_semasi_ESKI(doc, proje: ProjeVerisi) -> None:

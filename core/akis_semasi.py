@@ -27,29 +27,28 @@ _OP_SIRA = [
 def _hammadde_kutulari(proje) -> list[dict]:
     """
     Üretim yöntemi açıklamalarından hammadde kutularını çıkarır.
-    Her kutu: {"metin": "- Talk\\n- ...", "eleme": True/False}
-    eleme=True ise bu aşamada 'elenerek/elenir/elekten' işlemi geçer.
+    Her kutu: {"metin": ..., "eleme": bool, "operasyon_no": int}
+    eleme: parça 'elenerek/elenir/elekten' ile geldiyse True (parça bazında).
+    operasyon_no: bu hammaddenin geldiği operasyon (hizalama için).
     """
     adimlar = getattr(proje, "uretim_adimlari", None) or []
     bilinen = _bilinen_hammaddeler(proje)
 
+    import re as _re
     kutular = []
     for adim in adimlar:
+        baslik = adim[0]
         aciklama = adim[1] if len(adim) > 1 else ""
-        # bu aşamada eleme var mı? (tüm cümlede)
-        elenmis = bool(_re_eleme(aciklama))
-        for grup, _ in _aciklama_parcala(aciklama, bilinen):
+        m = _re.search(r"operasyon\s*(\d+)", baslik, _re.IGNORECASE)
+        op_no = int(m.group(1)) if m else 0
+        for grup, elenmis in _aciklama_parcala(aciklama, bilinen):
             if grup:
                 kutular.append({
-                    "metin": "\n".join("- " + m for m in grup),
+                    "metin": "\n".join("- " + m2 for m2 in grup),
                     "eleme": elenmis,
+                    "operasyon_no": op_no,
                 })
     return kutular
-
-
-def _re_eleme(metin: str) -> bool:
-    import re as _re
-    return _re.search(r"elen(erek|ir)|elekten", metin or "", _re.IGNORECASE) is not None
 
 
 def _bilinen_hammaddeler(proje) -> list[str]:

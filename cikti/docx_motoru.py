@@ -1086,11 +1086,10 @@ def _norm_basit(s: str) -> str:
 
 
 def _yatay_ok_xml(genislik_emu, yukseklik_emu):
-    """Sağa bakan düz ok (çizim şekli). Verilen yükseklik alanının dikey ortasında."""
+    """Sağa bakan düz ÇİZGİ ok (line + ok ucu). Dikey ortada konumlanır."""
     import random
     sid = random.randint(1000, 9999999)
-    ok_kalin = 50000
-    oy = max(0, (yukseklik_emu - ok_kalin) // 2)
+    oy = max(0, yukseklik_emu // 2)
     return (
         '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
         '<w:rPr/><w:drawing>'
@@ -1101,12 +1100,13 @@ def _yatay_ok_xml(genislik_emu, yukseklik_emu):
         '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
         '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
         '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
-        '<wps:cNvSpPr/><wps:spPr>'
-        f'<a:xfrm><a:off x="0" y="{oy}"/><a:ext cx="{genislik_emu}" cy="{ok_kalin}"/></a:xfrm>'
-        '<a:prstGeom prst="rightArrow"><a:avLst>'
-        '<a:gd name="adj1" fmla="val 50000"/><a:gd name="adj2" fmla="val 60000"/>'
-        '</a:avLst></a:prstGeom>'
+        '<wps:cNvCnPr/><wps:spPr>'
+        f'<a:xfrm><a:off x="0" y="{oy}"/><a:ext cx="{genislik_emu}" cy="0"/></a:xfrm>'
+        '<a:prstGeom prst="line"><a:avLst/></a:prstGeom>'
+        '<a:ln w="12700">'
         '<a:solidFill><a:srgbClr val="000000"/></a:solidFill>'
+        '<a:tailEnd type="triangle" w="med" len="med"/>'
+        '</a:ln>'
         '</wps:spPr><wps:bodyPr/>'
         '</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>'
     )
@@ -1343,24 +1343,54 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
     # Üretim Aşaması sütununda Karıştırma'yı GÖSTERME (eleme kutularıyla
     # detaylandırılacak). Sadece Tablet Baskı, Film Kaplama, Blisterleme kalır.
     operasyon_kutu = [k for k in kutular if k["operasyon"] != "Karıştırma"]
+    # operasyon adı -> operasyon numarası eşlemesi (hammadde hizalama için)
+    _OP_NO = {"Tablet Baskı": 3, "Film Kaplama": 4, "Blisterleme": 5}
 
-    # --- Sütun 0 (Hammaddeler) + Sütun 1 (Eleme kutuları, hizalı) ---
-    # Her hammadde kutusu için: sol kutu; ELEME ise sağ kutu ("Eleme") + → ok.
-    for j, ham in enumerate(hammadde_kutu):
-        metin = ham["metin"] if isinstance(ham, dict) else ham
-        elenmis = ham.get("eleme", False) if isinstance(ham, dict) else False
-        # sol: hammadde kutusu (ok YOK — ok iki sütun arasına, Eleme önüne gelir)
-        _kutu_paragraf(cells[0], metin, ilk=(j == 0), oklu=False)
-        # sağ (sütun 1): aynı hizada — ELEME ise dar "Eleme" kutusu (önünde → ok)
-        if elenmis:
-            _kutu_paragraf(cells[1], "Eleme", ilk=(j == 0), oklu=False,
+    # hammadde kutularını ayır: eleme grubu (üst) ve operasyona-ait olanlar
+    elemeli = [h for h in hammadde_kutu if h.get("eleme")]
+    elemesiz_ops = {}  # op_no -> [hammadde kutuları] (eleme olmayan, operasyona ait)
+    ilk_ops_no = min((_OP_NO.get(k["operasyon"], 99) for k in operasyon_kutu), default=3)
+    for h in hammadde_kutu:
+        if h.get("eleme"):
+            continue
+        op_no = h.get("operasyon_no", 0)
+        # ilk operasyondan önceki (Karıştırma bölgesi) eleme-olmayan hammaddeler üstte
+        if op_no < ilk_ops_no:
+            elemeli.append(h)  # üst gruba ekle (örn. Parasetamol "alınır")
+        else:
+            elemesiz_ops.setdefault(op_no, []).append(h)
+
+    # üst grubu operasyon_no + orijinal sıraya göre düzenle (Parasetamol Kafein'den önce)
+    elemeli_sirali = [h for h in hammadde_kutu
+                      if h.get("eleme") or h.get("operasyon_no", 0) < ilk_ops_no]
+
+    # --- ÜST: eleme grubu + Karıştırma bölgesi hammaddeleri ---
+    ilk = True
+    for ham in elemeli_sirali:
+        metin = ham["metin"]
+        _kutu_paragraf(cells[0], metin, ilk=ilk, oklu=False)
+        if ham.get("eleme"):
+            _kutu_paragraf(cells[1], "Eleme", ilk=ilk, oklu=False,
                            hizala_yukseklik=metin, dar=True, on_ok=True)
         else:
-            _bos_hiza(cells[1], metin, ilk=(j == 0))
+            _bos_hiza(cells[1], metin, ilk=ilk)
+        ilk = False
 
-    # --- Sütun 1 devamı: ana operasyonlar (Karıştırma hariç) ---
-    for idx, k in enumerate(operasyon_kutu):
-        _kutu_paragraf(cells[1], k["operasyon"], ilk=False, oklu=True)
+    # --- Ana operasyonlar: her biri için, o operasyona ait hammadde varsa hizala ---
+    for k in operasyon_kutu:
+        op_no = _OP_NO.get(k["operasyon"], 0)
+        ait_hammaddeler = elemesiz_ops.get(op_no, [])
+        if ait_hammaddeler:
+            # bu operasyona ait hammadde(ler) sol sütunda, operasyon kutusuyla hizada
+            for ham in ait_hammaddeler:
+                metin = ham["metin"]
+                _kutu_paragraf(cells[0], metin, ilk=False, oklu=False)
+                # operasyon kutusu sağda + aralarında çizgi ok (hammadde→operasyon)
+                _kutu_paragraf(cells[1], k["operasyon"], ilk=False, oklu=True,
+                               hizala_yukseklik=metin, on_ok=True)
+        else:
+            # hammadde yok: sadece operasyon kutusu, sol sütunda boşluk
+            _kutu_paragraf(cells[1], k["operasyon"], ilk=False, oklu=True)
 
     # --- Sütun 2 (İPK) ve Sütun 3 (Kimyasal) ---
     for i, k in enumerate(kutular):

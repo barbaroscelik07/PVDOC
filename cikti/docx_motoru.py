@@ -1086,23 +1086,24 @@ def _norm_basit(s: str) -> str:
 
 
 def _dikey_ok_xml(yukseklik_emu=180000):
-    """Aşağı bakan düz ÇİZGİ ok (line + ok ucu). Ortalanır."""
+    """Aşağı bakan dikey ok. Bounding box dikey-ince olduğundan çizgi dikeydir."""
     import random
     sid = random.randint(1000, 9999999)
+    w = 12700  # ok çizgisi kalınlığı = bounding box genişliği
     return (
         '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
         '<w:rPr/><w:drawing>'
         '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
         'distT="0" distB="0" distL="0" distR="0">'
-        f'<wp:extent cx="100000" cy="{yukseklik_emu}"/>'
+        f'<wp:extent cx="{w}" cy="{yukseklik_emu}"/>'
         f'<wp:docPr id="{sid}" name="dok{sid}"/>'
         '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
         '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
         '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
         '<wps:cNvCnPr/><wps:spPr>'
-        f'<a:xfrm><a:off x="50000" y="0"/><a:ext cx="0" cy="{yukseklik_emu}"/></a:xfrm>'
-        '<a:prstGeom prst="line"><a:avLst/></a:prstGeom>'
-        '<a:ln w="12700">'
+        f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="{yukseklik_emu}"/></a:xfrm>'
+        '<a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>'
+        '<a:ln w="12700" cap="flat">'
         '<a:solidFill><a:srgbClr val="000000"/></a:solidFill>'
         '<a:tailEnd type="triangle" w="med" len="med"/>'
         '</a:ln>'
@@ -1112,24 +1113,24 @@ def _dikey_ok_xml(yukseklik_emu=180000):
 
 
 def _yatay_ok_xml(genislik_emu, yukseklik_emu):
-    """Sağa bakan düz ÇİZGİ ok (line + ok ucu). Dikey ortada konumlanır."""
+    """Sağa bakan yatay ok. Bounding box yatay-ince olduğundan çizgi yataydır."""
     import random
     sid = random.randint(1000, 9999999)
-    oy = max(0, yukseklik_emu // 2)
+    h = 12700  # ok çizgisi kalınlığı = bounding box yüksekliği
     return (
         '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
         '<w:rPr/><w:drawing>'
         '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
         'distT="0" distB="0" distL="0" distR="0">'
-        f'<wp:extent cx="{genislik_emu}" cy="{yukseklik_emu}"/>'
+        f'<wp:extent cx="{genislik_emu}" cy="{h}"/>'
         f'<wp:docPr id="{sid}" name="ok{sid}"/>'
         '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
         '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
         '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
         '<wps:cNvCnPr/><wps:spPr>'
-        f'<a:xfrm><a:off x="0" y="{oy}"/><a:ext cx="{genislik_emu}" cy="0"/></a:xfrm>'
-        '<a:prstGeom prst="line"><a:avLst/></a:prstGeom>'
-        '<a:ln w="12700">'
+        f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="{genislik_emu}" cy="0"/></a:xfrm>'
+        '<a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>'
+        '<a:ln w="12700" cap="flat">'
         '<a:solidFill><a:srgbClr val="000000"/></a:solidFill>'
         '<a:tailEnd type="triangle" w="med" len="med"/>'
         '</a:ln>'

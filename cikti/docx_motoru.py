@@ -1139,9 +1139,10 @@ def _yatay_ok_xml(genislik_emu, yukseklik_emu):
     )
 
 
-def _kutu_sekli_xml(metin, genislik_emu, yukseklik_emu, dolgu="D9E2F3", oklu=False):
+def _kutu_sekli_xml(metin, genislik_emu, yukseklik_emu, dolgu="D9E2F3", oklu=False,
+                    geom="roundRect"):
     """
-    Bir dikdörtgen kutu şekli (roundRect) + içinde ortalı metin üreten DrawingML
+    Bir kutu şekli (geom: roundRect/rect) + içinde ortalı metin üreten DrawingML
     XML'i döndürür. Metin Word formatında (w:txbxContent içinde w:p) yazılır.
     """
     import html, random
@@ -1170,7 +1171,7 @@ def _kutu_sekli_xml(metin, genislik_emu, yukseklik_emu, dolgu="D9E2F3", oklu=Fal
         '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
         '<wps:cNvSpPr/><wps:spPr>'
         f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="{genislik_emu}" cy="{yukseklik_emu}"/></a:xfrm>'
-        '<a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom>'
+        f'<a:prstGeom prst="{geom}"><a:avLst/></a:prstGeom>'
         '<a:noFill/>'
         '<a:ln w="6350"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>'
         '</wps:spPr><wps:txbx><w:txbxContent>'
@@ -1290,35 +1291,15 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
             gorsel_satir += max(1, -(-len(satir) // KAR_SIGAR))
         return 230000 + max(1, gorsel_satir) * 170000
 
-    def _kutu_paragraf(cell, metin, ilk, oklu=True, sag_ok=False, hizala_yukseklik=None,
-                       dar=False, on_ok=False):
-        """Hücreye bir şekil-kutu ekler. oklu=True ve ilk değilse önce dikey ok.
-        dar=True: dar kutu (Eleme), sabit küçük yükseklikte + hizada dikey ortalı.
-        on_ok=True: kutunun soluna yatay çizgi ok."""
-        if not ilk and oklu:
-            po = cell.add_paragraph(); po.alignment = 1
-            po.paragraph_format.space_before = Pt(0)
-            po.paragraph_format.space_after = Pt(0)
-            po._p.append(parse_xml(_dikey_ok_xml(170000)))
+    def _kutu_paragraf(cell, metin, ilk, oklu=False, hizala_yukseklik=None, geom="roundRect"):
+        """Hücreye bir şekil-kutu ekler (ok YOK). geom: roundRect/rect."""
         p = cell.add_paragraph() if (cell.paragraphs[0].runs or not ilk) else cell.paragraphs[0]
-        p.alignment = 0 if (dar or on_ok) else 1
+        p.alignment = 1
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(2)
-        if dar:
-            # Eleme kutusu: sabit küçük yükseklik (hammadde ile aynı satırda dikey ortalı)
-            kutu_yuk = 340000
-            if on_ok:
-                p._p.append(parse_xml(_yatay_ok_xml(300000, kutu_yuk)))
-            xml = _kutu_sekli_xml(metin, 440000, kutu_yuk, dolgu=None)
-            p._p.append(parse_xml(xml))
-            return
         yuk = _yuk_hesapla(hizala_yukseklik if hizala_yukseklik else metin)
-        if on_ok:
-            p._p.append(parse_xml(_yatay_ok_xml(300000, yuk)))
-        xml = _kutu_sekli_xml(metin, 1330000, yuk, dolgu=None)
+        xml = _kutu_sekli_xml(metin, 1330000, yuk, dolgu=None, geom=geom)
         p._p.append(parse_xml(xml))
-        if sag_ok:
-            p._p.append(parse_xml(_yatay_ok_xml(300000, yuk)))
 
     def _bos_hiza(cell, hizala_metin, ilk):
         """Sütun 1'de hizalama için, verilen metin yüksekliğinde boş paragraf."""
@@ -1400,96 +1381,25 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
     _hucre_yaz(bsr[2], ["İPK Testleri"], bold=True)
     _hucre_yaz(bsr[3], ["Kimyasal Analizler"], bold=True)
 
-    # --- SATIR LİSTESİ: her satır = bir tablo row (görünmez iç kenarlık) ---
-    # Sütun eşlemesi: hammadde | üretim aşaması | ipk | kimyasal hizalı.
-    _OP_NO = {"Tablet Baskı": 3, "Film Kaplama": 4, "Blisterleme": 5}
-    operasyon_kutu = [k for k in kutular if k["operasyon"] != "Karıştırma"]
+    # --- TEK içerik satırı: 4 hücre, her hücrede dikey kutular (ok YOK) ---
+    cells = tablo.add_row().cells
+    for ust_cell in cells:
+        va = OxmlElement("w:vAlign"); va.set(qn("w:val"), "top")
+        ust_cell._tc.get_or_add_tcPr().append(va)
 
-    # hammaddeleri operasyon-ait olanlar / üst grup diye ayır
-    ilk_ops_no = min((_OP_NO.get(k["operasyon"], 99) for k in operasyon_kutu), default=3)
-    op_hammadde = {}   # op_no -> [hammadde kutuları]
-    ust_hammadde = []  # eleme grubu + karıştırma bölgesi
-    for h in hammadde_kutu:
-        op_no = h.get("operasyon_no", 0)
-        if (not h.get("eleme")) and op_no >= ilk_ops_no:
-            op_hammadde.setdefault(op_no, []).append(h)
-        else:
-            ust_hammadde.append(h)
+    # Sütun 0: Hammadde kutuları — DİKDÖRTGEN (köşeli) şekil
+    for j, ham in enumerate(hammadde_kutu):
+        metin = ham["metin"] if isinstance(ham, dict) else ham
+        _kutu_paragraf(cells[0], metin, ilk=(j == 0), geom="rect")
 
-    # IPK/Kimyasal kutularını sırayla operasyon satırlarına dağıtacağız
-    ipk_kutulari = [("\n".join("- " + t for t in k["ipk_testleri"]) if k["ipk_testleri"] else "",
-                     "\n".join("- " + t for t in k["kimyasal_testler"]) if k["kimyasal_testler"] else "")
-                    for k in kutular]
+    # Sütun 1: Üretim Aşaması — BOŞ (kullanıcı kendisi dolduracak)
 
-    # Satırları kur: [{ham, eleme, uretim, oklu, on_ok, ipk, kim}]
-    satirlar = []
-    # 1) üst grup (eleme bölgesi) — her hammadde bir satır
-    for h in ust_hammadde:
-        satirlar.append({
-            "ham": h["metin"], "eleme": h.get("eleme", False),
-            "uretim": "Eleme" if h.get("eleme") else None,
-            "on_ok": h.get("eleme", False), "oklu": False,
-            "ipk": None, "kim": None,
-        })
-    # 2) ana operasyonlar — her operasyon bir satır, IPK/Kim ile, ait hammadde varsa onunla
-    for oi, k in enumerate(operasyon_kutu):
-        op_no = _OP_NO.get(k["operasyon"], 0)
-        ait = op_hammadde.get(op_no, [])
-        ipk = "\n".join("- " + t for t in k["ipk_testleri"]) if k["ipk_testleri"] else None
-        kim = "\n".join("- " + t for t in k["kimyasal_testler"]) if k["kimyasal_testler"] else None
-        satirlar.append({
-            "ham": ait[0]["metin"] if ait else None,
-            "eleme": False,
-            "uretim": k["operasyon"],
-            "on_ok": bool(ait),          # hammadde varsa yatay ok (hammadde→operasyon)
-            "oklu": not bool(ait),       # hammadde yoksa üstten dikey ok
-            "ipk": ipk, "kim": kim,
-        })
-        # ait birden fazla hammadde varsa ek satırlar
-        for ek in ait[1:]:
-            satirlar.append({"ham": ek["metin"], "eleme": False, "uretim": None,
-                             "on_ok": False, "oklu": False, "ipk": None, "kim": None})
-
-    # Karıştırma'nın IPK/Kim'i — ilk ELEME satırına ekle (yoksa ilk satıra)
-    karistirma = next((k for k in kutular if k["operasyon"] == "Karıştırma"), None)
-    if karistirma and satirlar:
-        kipk = "\n".join("- " + t for t in karistirma["ipk_testleri"]) if karistirma["ipk_testleri"] else None
-        kkim = "\n".join("- " + t for t in karistirma["kimyasal_testler"]) if karistirma["kimyasal_testler"] else None
-        hedef = next((s for s in satirlar if s.get("eleme")), satirlar[0])
-        hedef["ipk"] = kipk
-        hedef["kim"] = kkim
-
-    # --- Her satır için tablo row ekle ve 4 hücreyi doldur ---
-    for s in satirlar:
-        rc = tablo.add_row().cells
-        for c in rc:
-            va = OxmlElement("w:vAlign"); va.set(qn("w:val"), "center")
-            c._tc.get_or_add_tcPr().append(va)
-        # Sütun 0: hammadde
-        if s["ham"]:
-            _kutu_paragraf(rc[0], s["ham"], ilk=True, oklu=False)
-        else:
-            _bos_satir(rc[0])
-        # Sütun 1: üretim aşaması (+ ok)
-        if s["uretim"]:
-            dar = (s["uretim"] == "Eleme")
-            _kutu_paragraf(rc[1], s["uretim"], ilk=True, oklu=s["oklu"],
-                           dar=dar, on_ok=s["on_ok"])
-        else:
-            _bos_satir(rc[1])
-        # Sütun 2: IPK
-        if s["ipk"]:
-            _kutu_paragraf(rc[2], s["ipk"], ilk=True, oklu=False)
-        else:
-            _bos_satir(rc[2])
-        # Sütun 3: Kimyasal
-        if s["kim"]:
-            _kutu_paragraf(rc[3], s["kim"], ilk=True, oklu=False)
-        else:
-            _bos_satir(rc[3])
-
-    # iç yatay kenarlıkları gizle (görünmez satırlar — tek kutu gibi görünür)
-    _ic_kenarlik_gizle(tablo)
+    # Sütun 2: İPK ve Sütun 3: Kimyasal — yuvarlatılmış kutu (değiştirilmedi)
+    for i, k in enumerate(kutular):
+        ipk_metin = "\n".join("- " + t for t in k["ipk_testleri"]) if k["ipk_testleri"] else "—"
+        _kutu_paragraf(cells[2], ipk_metin, ilk=(i == 0), geom="roundRect")
+        kim_metin = "\n".join("- " + t for t in k["kimyasal_testler"]) if k["kimyasal_testler"] else "—"
+        _kutu_paragraf(cells[3], kim_metin, ilk=(i == 0), geom="roundRect")
     return
 
 

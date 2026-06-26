@@ -24,23 +24,32 @@ _OP_SIRA = [
 ]
 
 
-def _hammadde_kutulari(proje) -> list[str]:
+def _hammadde_kutulari(proje) -> list[dict]:
     """
     Üretim yöntemi açıklamalarından hammadde kutularını çıkarır.
-    Her aşama cümlesi işlem fiiline göre parçalanır (konteynıra alınır / elenerek /
-    çözülerek); her parçadaki hammaddeler ayrı kutu olur.
-    Hammadde isimleri öncelikle proje.hammaddeler listesinden, yoksa cümleden gelir.
+    Her kutu: {"metin": "- Talk\\n- ...", "eleme": True/False}
+    eleme=True ise bu aşamada 'elenerek/elenir/elekten' işlemi geçer.
     """
     adimlar = getattr(proje, "uretim_adimlari", None) or []
-    bilinen = _bilinen_hammaddeler(proje)  # birim formülden gelen isimler
+    bilinen = _bilinen_hammaddeler(proje)
 
     kutular = []
     for adim in adimlar:
         aciklama = adim[1] if len(adim) > 1 else ""
-        for grup in _aciklama_parcala(aciklama, bilinen):
+        # bu aşamada eleme var mı? (tüm cümlede)
+        elenmis = bool(_re_eleme(aciklama))
+        for grup, _ in _aciklama_parcala(aciklama, bilinen):
             if grup:
-                kutular.append("\n".join("- " + m for m in grup))
+                kutular.append({
+                    "metin": "\n".join("- " + m for m in grup),
+                    "eleme": elenmis,
+                })
     return kutular
+
+
+def _re_eleme(metin: str) -> bool:
+    import re as _re
+    return _re.search(r"elen(erek|ir)|elekten", metin or "", _re.IGNORECASE) is not None
 
 
 def _bilinen_hammaddeler(proje) -> list[str]:
@@ -56,30 +65,32 @@ def _bilinen_hammaddeler(proje) -> list[str]:
 
 
 # İşlem fiili sınır kelimeleri — cümleyi bu noktalardan ayrı kutulara böler
-_ISLEM_SINIR = ("elenerek", "çözülerek", "ilave edil", "konteynıra alın",
-                "konteynera alın")
+_ISLEM_SINIR = ("elenerek", "elenir", "elekten", "çözülerek", "ilave edil",
+                "konteynıra alın", "konteynera alın")
 
 
-def _aciklama_parcala(aciklama: str, bilinen: list[str]) -> list[list[str]]:
+def _aciklama_parcala(aciklama: str, bilinen: list[str]):
     """
-    Bir aşama açıklamasını işlem fiillerine göre parçalara böler ve her parçadaki
-    hammaddeleri (bilinen listeden veya cümleden) gruplar halinde döndürür.
+    Bir aşama açıklamasını işlem fiillerine göre parçalara böler.
+    Her parça için (madde_listesi, elenmis_mi) döndürür.
+    elenmis_mi: parçadan sonra gelen işlem sınırı 'elenerek/elenir/elekten' ise True.
     """
     if not aciklama:
         return []
-    # cümleyi işlem fiili sınırlarında parçala (sınır kelimesi parçanın sonunda kalır)
     import re as _re
     desen = "(" + "|".join(_ISLEM_SINIR) + ")"
     parcalar_ham = _re.split(desen, aciklama, flags=_re.IGNORECASE)
-    # split sonrası: [metin, sinir, metin, sinir, ...] — metin parçalarını al
-    metin_parcalari = [parcalar_ham[i] for i in range(0, len(parcalar_ham), 2)]
-
-    gruplar = []
-    for parca in metin_parcalari:
-        maddeler = _parcada_madde_bul(parca, bilinen)
+    # [metin, sinir, metin, sinir, ...]
+    sonuc = []
+    for i in range(0, len(parcalar_ham), 2):
+        metin = parcalar_ham[i]
+        # bu metni takip eden sınır kelimesi (varsa)
+        sinir = parcalar_ham[i + 1] if i + 1 < len(parcalar_ham) else ""
+        maddeler = _parcada_madde_bul(metin, bilinen)
         if maddeler:
-            gruplar.append(maddeler)
-    return gruplar
+            elenmis = "elen" in (sinir or "").lower()
+            sonuc.append((maddeler, elenmis))
+    return sonuc
 
 
 def _parcada_madde_bul(parca: str, bilinen: list[str]) -> list[str]:

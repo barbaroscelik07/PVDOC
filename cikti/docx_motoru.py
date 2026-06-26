@@ -1242,9 +1242,14 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
         p.alignment = 1
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(2)
-        # kutu yüksekliğini içerik satır sayısına göre ayarla
-        satir_say = max(1, metin.count("\n") + 1)
-        yuk = 300000 + (satir_say - 1) * 150000
+        # Kutu yüksekliği: her mantıksal satır, kutu genişliğine göre birden fazla
+        # görsel satıra sarabilir. ~32 karakter bir görsel satır (sz=14, ~1.33M EMU).
+        KAR_SIGAR = 30
+        gorsel_satir = 0
+        for satir in metin.split("\n"):
+            gorsel_satir += max(1, -(-len(satir) // KAR_SIGAR))  # tavana yuvarla
+        gorsel_satir = max(1, gorsel_satir)
+        yuk = 230000 + gorsel_satir * 170000
         xml = _kutu_sekli_xml(metin, 1330000, yuk, dolgu=None)
         p._p.append(parse_xml(xml))
 
@@ -1297,7 +1302,8 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
 
     # Sütun 0: Hammaddeler — "- " önek zaten veri motorunda eklendi
     for j, ham in enumerate(hammadde_kutu):
-        _kutu_paragraf(cells[0], ham, ilk=(j == 0), oklu=False)
+        metin = ham["metin"] if isinstance(ham, dict) else ham
+        _kutu_paragraf(cells[0], metin, ilk=(j == 0), oklu=False)
 
 
 def _doldur_akis_semasi_ESKI(doc, proje: ProjeVerisi) -> None:

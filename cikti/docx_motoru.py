@@ -1236,10 +1236,11 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
             gorsel_satir += max(1, -(-len(satir) // KAR_SIGAR))
         return 230000 + max(1, gorsel_satir) * 170000
 
-    def _kutu_paragraf(cell, metin, ilk, oklu=True, sag_ok=False, hizala_yukseklik=None):
+    def _kutu_paragraf(cell, metin, ilk, oklu=True, sag_ok=False, hizala_yukseklik=None,
+                       dar=False, on_ok=False):
         """Hücreye bir şekil-kutu ekler. oklu=True ve ilk değilse önce ↓ ok.
-        sag_ok=True: kutudan sonra satır içi → ok (yatay). hizala_yukseklik: başka
-        bir metnin yüksekliğine eşitle (hizalama)."""
+        dar=True: genişlik 1/3. on_ok=True: kutunun soluna (önüne) → yatay ok.
+        hizala_yukseklik: başka bir metnin yüksekliğine eşitle."""
         if not ilk and oklu:
             po = cell.add_paragraph(); po.alignment = 1
             po.paragraph_format.space_before = Pt(0)
@@ -1248,14 +1249,20 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
             r.font.name = "Times New Roman"; r.font.size = Pt(12)
             r.font.color.rgb = RGBColor(0, 0, 0)
         p = cell.add_paragraph() if (cell.paragraphs[0].runs or not ilk) else cell.paragraphs[0]
-        p.alignment = 1
+        # dar/oklu kutular sola dayalı, normal kutular ortalı
+        p.alignment = 0 if (dar or on_ok) else 1
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(2)
         yuk = _yuk_hesapla(hizala_yukseklik if hizala_yukseklik else metin)
-        xml = _kutu_sekli_xml(metin, 1330000, yuk, dolgu=None)
+        if on_ok:
+            # kutudan ÖNCE yatay ok (→), aynı satırda
+            r = p.add_run("→ ")
+            r.font.name = "Times New Roman"; r.font.size = Pt(12)
+            r.font.color.rgb = RGBColor(0, 0, 0)
+        genislik = 440000 if dar else 1330000  # dar = ~1/3
+        xml = _kutu_sekli_xml(metin, genislik, yuk, dolgu=None)
         p._p.append(parse_xml(xml))
         if sag_ok:
-            # kutunun yanına yatay ok (→) — aynı paragrafın sonuna
             r = p.add_run("  →")
             r.font.name = "Times New Roman"; r.font.size = Pt(12)
             r.font.color.rgb = RGBColor(0, 0, 0)
@@ -1319,12 +1326,12 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
     for j, ham in enumerate(hammadde_kutu):
         metin = ham["metin"] if isinstance(ham, dict) else ham
         elenmis = ham.get("eleme", False) if isinstance(ham, dict) else False
-        # sol: hammadde kutusu (ELEME ise sağına → ok karakteri eklenir)
-        _kutu_paragraf(cells[0], metin, ilk=(j == 0), oklu=False, sag_ok=elenmis)
-        # sağ (sütun 1): aynı hizada — ELEME ise "Eleme" kutusu, değilse boşluk
+        # sol: hammadde kutusu (ok YOK — ok iki sütun arasına, Eleme önüne gelir)
+        _kutu_paragraf(cells[0], metin, ilk=(j == 0), oklu=False)
+        # sağ (sütun 1): aynı hizada — ELEME ise dar "Eleme" kutusu (önünde → ok)
         if elenmis:
             _kutu_paragraf(cells[1], "Eleme", ilk=(j == 0), oklu=False,
-                           hizala_yukseklik=metin)
+                           hizala_yukseklik=metin, dar=True, on_ok=True)
         else:
             _bos_hiza(cells[1], metin, ilk=(j == 0))
 

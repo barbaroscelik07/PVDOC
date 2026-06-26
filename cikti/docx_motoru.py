@@ -1085,6 +1085,33 @@ def _norm_basit(s: str) -> str:
     return (s or "").translate(tr).lower()
 
 
+def _yatay_ok_xml(genislik_emu, yukseklik_emu):
+    """Sağa bakan düz ok (çizim şekli). Verilen yükseklik alanının dikey ortasında."""
+    import random
+    sid = random.randint(1000, 9999999)
+    ok_kalin = 50000
+    oy = max(0, (yukseklik_emu - ok_kalin) // 2)
+    return (
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:rPr/><w:drawing>'
+        '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'distT="0" distB="0" distL="0" distR="0">'
+        f'<wp:extent cx="{genislik_emu}" cy="{yukseklik_emu}"/>'
+        f'<wp:docPr id="{sid}" name="ok{sid}"/>'
+        '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
+        '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
+        '<wps:cNvSpPr/><wps:spPr>'
+        f'<a:xfrm><a:off x="0" y="{oy}"/><a:ext cx="{genislik_emu}" cy="{ok_kalin}"/></a:xfrm>'
+        '<a:prstGeom prst="rightArrow"><a:avLst>'
+        '<a:gd name="adj1" fmla="val 50000"/><a:gd name="adj2" fmla="val 60000"/>'
+        '</a:avLst></a:prstGeom>'
+        '<a:solidFill><a:srgbClr val="000000"/></a:solidFill>'
+        '</wps:spPr><wps:bodyPr/>'
+        '</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>'
+    )
+
+
 def _kutu_sekli_xml(metin, genislik_emu, yukseklik_emu, dolgu="D9E2F3", oklu=False):
     """
     Bir dikdörtgen kutu şekli (roundRect) + içinde ortalı metin üreten DrawingML
@@ -1255,17 +1282,13 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
         p.paragraph_format.space_after = Pt(2)
         yuk = _yuk_hesapla(hizala_yukseklik if hizala_yukseklik else metin)
         if on_ok:
-            # kutudan ÖNCE yatay ok (→), aynı satırda
-            r = p.add_run("→ ")
-            r.font.name = "Times New Roman"; r.font.size = Pt(12)
-            r.font.color.rgb = RGBColor(0, 0, 0)
+            # kutudan ÖNCE gerçek çizim oku (→), kutu yüksekliğinin dikey ortasında
+            p._p.append(parse_xml(_yatay_ok_xml(300000, yuk)))
         genislik = 440000 if dar else 1330000  # dar = ~1/3
         xml = _kutu_sekli_xml(metin, genislik, yuk, dolgu=None)
         p._p.append(parse_xml(xml))
         if sag_ok:
-            r = p.add_run("  →")
-            r.font.name = "Times New Roman"; r.font.size = Pt(12)
-            r.font.color.rgb = RGBColor(0, 0, 0)
+            p._p.append(parse_xml(_yatay_ok_xml(300000, yuk)))
 
     def _bos_hiza(cell, hizala_metin, ilk):
         """Sütun 1'de hizalama için, verilen metin yüksekliğinde boş paragraf."""

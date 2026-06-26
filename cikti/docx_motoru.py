@@ -1229,8 +1229,17 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
             run.font.size = Pt(9)
             run.font.color.rgb = RGBColor(0, 0, 0)
 
-    def _kutu_paragraf(cell, metin, ilk, oklu=True, sag_ok=False):
-        """Hücreye bir şekil-kutu ekler. oklu=True ve ilk değilse önce ↓ ok."""
+    def _yuk_hesapla(metin):
+        KAR_SIGAR = 30
+        gorsel_satir = 0
+        for satir in metin.split("\n"):
+            gorsel_satir += max(1, -(-len(satir) // KAR_SIGAR))
+        return 230000 + max(1, gorsel_satir) * 170000
+
+    def _kutu_paragraf(cell, metin, ilk, oklu=True, sag_ok=False, hizala_yukseklik=None):
+        """Hücreye bir şekil-kutu ekler. oklu=True ve ilk değilse önce ↓ ok.
+        sag_ok=True: kutudan sonra satır içi → ok (yatay). hizala_yukseklik: başka
+        bir metnin yüksekliğine eşitle (hizalama)."""
         if not ilk and oklu:
             po = cell.add_paragraph(); po.alignment = 1
             po.paragraph_format.space_before = Pt(0)
@@ -1242,16 +1251,27 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
         p.alignment = 1
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(2)
-        # Kutu yüksekliği: her mantıksal satır, kutu genişliğine göre birden fazla
-        # görsel satıra sarabilir. ~32 karakter bir görsel satır (sz=14, ~1.33M EMU).
-        KAR_SIGAR = 30
-        gorsel_satir = 0
-        for satir in metin.split("\n"):
-            gorsel_satir += max(1, -(-len(satir) // KAR_SIGAR))  # tavana yuvarla
-        gorsel_satir = max(1, gorsel_satir)
-        yuk = 230000 + gorsel_satir * 170000
+        yuk = _yuk_hesapla(hizala_yukseklik if hizala_yukseklik else metin)
         xml = _kutu_sekli_xml(metin, 1330000, yuk, dolgu=None)
         p._p.append(parse_xml(xml))
+        if sag_ok:
+            # kutunun yanına yatay ok (→) — aynı paragrafın sonuna
+            r = p.add_run("  →")
+            r.font.name = "Times New Roman"; r.font.size = Pt(12)
+            r.font.color.rgb = RGBColor(0, 0, 0)
+
+    def _bos_hiza(cell, hizala_metin, ilk):
+        """Sütun 1'de hizalama için, verilen metin yüksekliğinde boş paragraf."""
+        p = cell.add_paragraph() if (cell.paragraphs[0].runs or not ilk) else cell.paragraphs[0]
+        p.alignment = 1
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(2)
+        # görünmez ama yer kaplayan boşluk: yükseklik kadar satır
+        yuk = _yuk_hesapla(hizala_metin)
+        # boş kutu yerine sadece boşluk paragrafı (yükseklik için satır)
+        satir_say = max(1, round(yuk / 170000))
+        r = p.add_run("\n" * (satir_say - 1) if satir_say > 1 else " ")
+        r.font.size = Pt(7)
 
     # --- Tablo iskeleti (kenarlıksız, tek satır) ---
     tbl = OxmlElement("w:tbl")
@@ -1290,20 +1310,34 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
         ust_cell._tc.get_or_add_tcPr().append(va)
 
     n = len(kutular)
-    for i, k in enumerate(kutular):
-        # Sütun 1: operasyon kutusu — aralarında ↓ ok (önek YOK)
-        _kutu_paragraf(cells[1], k["operasyon"], ilk=(i == 0), oklu=True)
-        # Sütun 2: IPK testleri kutusu — "- " önekli, ok YOK
-        ipk_metin = "\n".join("- " + t for t in k["ipk_testleri"]) if k["ipk_testleri"] else "—"
-        _kutu_paragraf(cells[2], ipk_metin, ilk=(i == 0), oklu=False, sag_ok=True)
-        # Sütun 3: kimyasal kutusu — "- " önekli, ok YOK
-        kim_metin = "\n".join("- " + t for t in k["kimyasal_testler"]) if k["kimyasal_testler"] else "—"
-        _kutu_paragraf(cells[3], kim_metin, ilk=(i == 0), oklu=False)
+    # Üretim Aşaması sütununda Karıştırma'yı GÖSTERME (eleme kutularıyla
+    # detaylandırılacak). Sadece Tablet Baskı, Film Kaplama, Blisterleme kalır.
+    operasyon_kutu = [k for k in kutular if k["operasyon"] != "Karıştırma"]
 
-    # Sütun 0: Hammaddeler — "- " önek zaten veri motorunda eklendi
+    # --- Sütun 0 (Hammaddeler) + Sütun 1 (Eleme kutuları, hizalı) ---
+    # Her hammadde kutusu için: sol kutu; ELEME ise sağ kutu ("Eleme") + → ok.
     for j, ham in enumerate(hammadde_kutu):
         metin = ham["metin"] if isinstance(ham, dict) else ham
-        _kutu_paragraf(cells[0], metin, ilk=(j == 0), oklu=False)
+        elenmis = ham.get("eleme", False) if isinstance(ham, dict) else False
+        # sol: hammadde kutusu (ELEME ise sağına → ok karakteri eklenir)
+        _kutu_paragraf(cells[0], metin, ilk=(j == 0), oklu=False, sag_ok=elenmis)
+        # sağ (sütun 1): aynı hizada — ELEME ise "Eleme" kutusu, değilse boşluk
+        if elenmis:
+            _kutu_paragraf(cells[1], "Eleme", ilk=(j == 0), oklu=False,
+                           hizala_yukseklik=metin)
+        else:
+            _bos_hiza(cells[1], metin, ilk=(j == 0))
+
+    # --- Sütun 1 devamı: ana operasyonlar (Karıştırma hariç) ---
+    for idx, k in enumerate(operasyon_kutu):
+        _kutu_paragraf(cells[1], k["operasyon"], ilk=False, oklu=True)
+
+    # --- Sütun 2 (İPK) ve Sütun 3 (Kimyasal) ---
+    for i, k in enumerate(kutular):
+        ipk_metin = "\n".join("- " + t for t in k["ipk_testleri"]) if k["ipk_testleri"] else "—"
+        _kutu_paragraf(cells[2], ipk_metin, ilk=(i == 0), oklu=False)
+        kim_metin = "\n".join("- " + t for t in k["kimyasal_testler"]) if k["kimyasal_testler"] else "—"
+        _kutu_paragraf(cells[3], kim_metin, ilk=(i == 0), oklu=False)
 
 
 def _doldur_akis_semasi_ESKI(doc, proje: ProjeVerisi) -> None:

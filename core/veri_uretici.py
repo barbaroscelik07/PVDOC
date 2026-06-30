@@ -478,13 +478,14 @@ def _bos_nokta(spek: Spesifikasyon, test: Test = None, numune_sayisi: int = 10) 
     return {"seriler": seriler}
 
 
-def _agirlik_band(spek: Spesifikasyon) -> tuple[float, float]:
+def _agirlik_band(spek: Spesifikasyon, hedef_override: float | None = None) -> tuple[float, float]:
     """
     Ağırlık tekdüzeliği üretim bandı: hedef – hedef×1.025.
     Alt uç hedef'tir; böylece bireysel ölçümler ve nokta/seri ortalamaları
     hedefin altına inmez ve Ortalama Ağırlık tablosuyla çelişmez.
+    hedef_override verilirse (aynı aşamadaki Ortalama Ağırlık'tan) o kullanılır.
     """
-    hedef = _hedef_metinden(spek)
+    hedef = hedef_override if hedef_override is not None else _hedef_metinden(spek)
     if hedef is None:
         alt, ust = _uretim_sinirlari(spek)
         if alt is not None and ust is not None:
@@ -494,15 +495,16 @@ def _agirlik_band(spek: Spesifikasyon) -> tuple[float, float]:
     return hedef, hedef * 1.025
 
 
-def _agirlik_tekduzeligi(spek: Spesifikasyon, film: bool = False) -> dict:
+def _agirlik_tekduzeligi(spek: Spesifikasyon, film: bool = False,
+                         hedef_override: float | None = None) -> dict:
     """
     Ağırlık Tekdüzeliği. Kısım, ürün formundan (operasyon) belirlenir:
       - Tablet aşaması (film=False): Baş/Orta/Son × 10 numune + Ort/RSD%/SD.
       - Film aşaması  (film=True) : Baş/Orta/Son YOK, seri başına 20 düz değer
                                     + Ort/RSD%/SD (tek blok).
-    Band: hedef×0.985 – hedef×1.025.
+    Band: hedef – hedef×1.025. hedef_override verilirse o hedef kullanılır.
     """
-    alt, ust = _agirlik_band(spek)
+    alt, ust = _agirlik_band(spek, hedef_override)
     seriler = []
     if film:
         # Seri başına düz 20 değer
@@ -601,7 +603,8 @@ def test_verisi_uret(test: Test) -> dict:
     if t is TabloTipi.BOS_NOKTA:
         return _bos_nokta(spek, test)
     if t is TabloTipi.AGIRLIK_TEKDUZELIGI:
-        return _agirlik_tekduzeligi(spek, film=_film_asamasi(test))
+        return _agirlik_tekduzeligi(spek, film=_film_asamasi(test),
+                                    hedef_override=getattr(test, "_hedef_devralinan", None))
     if t is TabloTipi.MATRIS:
         return _matris(spek)
     return _tek_sonuc(spek)
@@ -619,6 +622,20 @@ def tum_testleri_uret(testler: list[Test], tohum: int | None = None) -> None:
     """
     if tohum is not None:
         random.seed(tohum)
+
+    # 0) Ağırlık Tekdüzeliği'nin değer bandı için HEDEF gerekir. Kendi
+    #    spesifikasyonunda hedef yoksa AYNI OPERASYONDAKİ Ortalama Ağırlık
+    #    spesifikasyonundan türetilir (örn. 700 mg ± %5 → hedef 700).
+    ort_agirlik_map: dict[str, Test] = {}
+    for test in testler:
+        if "ortalama ağırlık" in test.ad.lower():
+            ort_agirlik_map[(test.operasyon or "").lower()] = test
+    for test in testler:
+        if test.tablo_tipi is TabloTipi.AGIRLIK_TEKDUZELIGI:
+            if _hedef_metinden(test.spesifikasyon) is None:
+                esi = ort_agirlik_map.get((test.operasyon or "").lower())
+                if esi is not None:
+                    test._hedef_devralinan = _hedef_metinden(esi.spesifikasyon)
 
     # 1) Tüm Ağırlık Tekdüzeliği testlerini önce üret (operasyona göre indeksle)
     agirlik_map: dict[str, Test] = {}
@@ -660,6 +677,8 @@ def _ortalama_agirlik_turet(agirlik_test: Test, spek: Spesifikasyon) -> dict:
     Hedef tanımlıysa türetilen ortalamalar hedeften küçük olamaz (alta klipslenir).
     """
     hedef = _hedef_metinden(spek)
+    if hedef is None:
+        hedef = getattr(agirlik_test, "_hedef_devralinan", None)
     film = agirlik_test.sonuc_verisi.get("film", False)
 
     if film:

@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from core.models import ProjeVerisi
-from core import veri_uretici as vu
 from cikti import docx_motoru as motor
 from cikti import pdf_donustur as pdfm
 from cikti.pdf_donustur import pdf_mevcut_mu
@@ -67,11 +66,6 @@ class UretimIscisi(QThread):
         try:
             urun = _dosya_adi_guvenli(self.proje.dokuman.urun_adi or "urun")
 
-            if self.pvr and self.veri_uret:
-                self.ilerleme.emit("Sonuç verisi üretiliyor…")
-                for test in self.proje.spek_karti.testler:
-                    test.sonuc_verisi = vu.test_verisi_uret(test)
-
             if self.pvp:
                 self.ilerleme.emit("PVP (Word) üretiliyor…")
                 yp = motor.pvp_uret(self.proje, self.dizin / f"PVP_{urun}.docx")
@@ -83,9 +77,14 @@ class UretimIscisi(QThread):
                         uretilen.append(str(pp))
 
             if self.pvr:
+                if self.veri_uret:
+                    self.ilerleme.emit("Sonuç verisi üretiliyor…")
                 self.ilerleme.emit("PVR (Word) üretiliyor…")
+                # Veri üretimi, kural motoruyla TÜRETİLMİŞ test listesi üzerinde
+                # çalışmalı; bu yüzden pvr_uret'in kendi türetme context'i içinde
+                # üretilir (veri_uret=True). Aksi halde sonuç hücreleri boş kalır.
                 yr = motor.pvr_uret(self.proje, self.dizin / f"PVR_{urun}.docx",
-                                    veri_uret=False)
+                                    veri_uret=self.veri_uret)
                 uretilen.append(str(yr))
                 if self.pdf:
                     self.ilerleme.emit("PVR (PDF) üretiliyor…")

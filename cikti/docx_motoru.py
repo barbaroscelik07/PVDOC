@@ -793,11 +793,39 @@ def _ekle_sonuc_ortalama_agirlik_film(doc, proje, test, no):
         _yaz_bos(t.rows[3].cells[c+1], _ort(c), True)
 
 
+def _agirlik_spek_yaz(hucre, test):
+    """
+    Ağırlık Tekdüzeliği spesifikasyon hücresini PVR formatında doldurur:
+    iki sapma satırı (etiket + limit). Sapma bilgisi (aciklama_etiketi/spek ve
+    aciklama2_*) yoksa testin kendi spesifikasyon metnine düşer.
+    """
+    satirlar = []
+    if test.aciklama_etiketi or test.aciklama_spek:
+        et = (test.aciklama_etiketi or "").strip()
+        sp = (test.aciklama_spek or "").strip()
+        satirlar.append(f"{et} {sp}".strip())
+    if test.aciklama2_etiketi or test.aciklama2_spek:
+        et = (test.aciklama2_etiketi or "").strip()
+        sp = (test.aciklama2_spek or "").strip()
+        satirlar.append(f"{et} {sp}".strip())
+    if not satirlar:
+        _yaz_sol(hucre, test.spesifikasyon.metni_olustur())
+        return
+    # İlk satırı hücrenin mevcut paragrafına, kalanları yeni paragraf olarak yaz
+    _yaz_sol(hucre, satirlar[0])
+    for s in satirlar[1:]:
+        p = hucre.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        run = p.add_run(s)
+        run.font.size = Pt(8)
+
+
 def _ekle_sonuc_agirlik(doc, proje, test, no):
     """
     Ağırlık Tekdüzeliği. Kısma göre iki yapı:
       - Tablet: Baş/Orta/Son × 10 numune + Ort/RSD%/SD.
       - Film  : Baş/Orta/Son YOK; seri başına düz 20 değer + Ort/RSD%/SD.
+    Spesifikasyon hücresi iki sapma satırını gösterir (PVR Tablo.37/60).
     """
     if test.sonuc_verisi.get("film"):
         _ekle_sonuc_agirlik_film(doc, proje, test, no)
@@ -810,7 +838,7 @@ def _ekle_sonuc_agirlik(doc, proje, test, no):
     _yaz_sol(t.rows[0].cells[1], test.ad)
     _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
     t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI * 3])
-    _yaz_sol(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
+    _agirlik_spek_yaz(t.rows[1].cells[1], test)
     _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
     col = 1
     for sno in _seri_nolar(proje):
@@ -852,7 +880,7 @@ def _ekle_sonuc_agirlik_film(doc, proje, test, no):
     _yaz_sol(t.rows[0].cells[1], test.ad)
     _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
     t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI])
-    _yaz_sol(t.rows[1].cells[1], test.spesifikasyon.metni_olustur())
+    _agirlik_spek_yaz(t.rows[1].cells[1], test)
     _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
     for c, sno in enumerate(_seri_nolar(proje)):
         _yaz_bos(t.rows[2].cells[c+1], f"Seri No: {sno}", True)
@@ -1038,16 +1066,9 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
             else:
                 _ekle_sonuc_bos(doc, proje, test, no)
         elif tip is TabloTipi.AGIRLIK_TEKDUZELIGI:
+            # Sapma limitleri (sapabilir/sapmamalı) ARTIK ana tablonun
+            # spesifikasyon hücresinde gösterilir; ayrı limit tablosu üretilmez.
             _ekle_sonuc_agirlik(doc, proje, test, no)
-            # Resim 2: ayrıca 2 limit tablosu (sapabilir + sapmamalıdır)
-            if test.aciklama_etiketi:
-                no += 1
-                baslik1 = test.aciklama_etiketi.lstrip("—- ").strip()
-                _ekle_limit_tablosu(doc, proje, baslik1, test.aciklama_spek, no)
-            if test.aciklama2_etiketi:
-                no += 1
-                baslik2 = test.aciklama2_etiketi.lstrip("—- ").strip()
-                _ekle_limit_tablosu(doc, proje, baslik2, test.aciklama2_spek, no)
         else:
             _ekle_sonuc_tek(doc, proje, test, no)
         doc.add_paragraph("")

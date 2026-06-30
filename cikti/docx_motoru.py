@@ -486,13 +486,36 @@ def _sonuc_basligi(doc, no, ad):
     r = p.add_run(f"Tablo.{no} {ad} Sonuçları")
     r.bold = True
     r.font.size = Pt(10)
+    r.font.name = "Times New Roman"
+    # Başlık daima takip eden tabloyla aynı sayfada kalsın
+    p.paragraph_format.keep_with_next = True
+    p.paragraph_format.keep_together = True
     return p
 
 
 def _yeni_tablo(doc, satir, sutun):
     t = doc.add_table(rows=satir, cols=sutun)
     t.style = "Table Grid"
+    _tablo_bolunmesin(t)
+    # Geniş tablolar (Baş/Orta/Son × 3 seri = 10 sütun) sayfaya sığsın
+    if sutun >= SERI_SAYISI * 3 + 1:
+        _genis_tablo_ayari(t)
     return t
+
+
+def _tablo_bolunmesin(t):
+    """
+    Tablonun satırları sayfa sonunda bölünmesin (her satıra cantSplit) ve
+    mümkün olduğunca tablo tek sayfada kalsın. Böylece bir tablo ikinci
+    sayfaya sarkmaz.
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    for row in t.rows:
+        trPr = row._tr.get_or_add_trPr()
+        cantSplit = OxmlElement("w:cantSplit")
+        trPr.append(cantSplit)
+    # Başlık satırını tekrar etme yok; sadece bölünmeyi engelliyoruz.
 
 
 def _seri_dict(seriler, c):
@@ -517,15 +540,18 @@ def _bicimle(metin):
     return str(metin)
 
 
-def _yaz_bos(cell, metin, bold=False):
+def _yaz_bos(cell, metin, bold=False, punto=12):
     from docx.shared import RGBColor
     p = cell.paragraphs[0]
     r = p.add_run(_bicimle(metin))
     r.bold = bold
-    r.font.size = Pt(12)
+    r.font.size = Pt(punto)
     r.font.name = "Times New Roman"
     r.font.color.rgb = RGBColor(0, 0, 0)
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Hücre içeriği tek satıra sığsın: paragraf boşluklarını sıfırla
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
 
 
 def _yaz_sol(cell, metin, bold=False):
@@ -641,6 +667,25 @@ def _ekle_sonuc_miktar(doc, proje, test, no):
         _yaz_bos(a, ort, True); col += 3
 
 
+def _genis_tablo_ayari(t):
+    """
+    Geniş (10 sütunlu) sonuç tablolarının sayfaya sığması için: otomatik
+    genişlik (autofit) açılır ve tablo sayfa genişliğine yayılır. Değer
+    hücrelerinde küçük punto (9) ile birlikte tek satıra sığma sağlanır.
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    t.autofit = True
+    t.allow_autofit = True
+    tblPr = t._element.tblPr
+    # Tablo genişliği: sayfanın tamamı (pct 5000 = %100)
+    tblW = tblPr.find(qn("w:tblW"))
+    if tblW is None:
+        tblW = OxmlElement("w:tblW"); tblPr.append(tblW)
+    tblW.set(qn("w:type"), "pct")
+    tblW.set(qn("w:w"), "5000")
+
+
 def _ekle_sonuc_on(doc, proje, test, no):
     """Karışım Tekdüzeliği: 1-10 + Ortalama."""
     seriler = test.sonuc_verisi.get("seriler", [])
@@ -707,6 +752,7 @@ def _ekle_sonuc_bos(doc, proje, test, no, ns=10):
         sonuc = _seri_dict(seriler, c).get("sonuc", "")
         a = t.rows[5+ns].cells[col]; a.merge(t.rows[5+ns].cells[col+2])
         _yaz_bos(a, sonuc, True); col += 3
+    _genis_tablo_ayari(t)
 
 
 def _ekle_sonuc_ortalama_agirlik(doc, proje, test, no):
@@ -924,17 +970,27 @@ def _ekle_sonuc_impurite(doc, proje, imp, baslik, no, tohum_ek=0):
     te = imp.te or (str(imp.limit_metni).upper().replace(" ", "").endswith("T.E.")
                     if imp.limit_metni else False)
     maks = imp.maksimum_deger
-    for ri, et in [(4, "Numune 1"), (5, "Numune 2"), (6, "Sonuç")]:
-        _yaz_sol(t.rows[ri].cells[0], et, ri == 6)
-        for c in range(SERI_SAYISI):
-            if te:
-                deg = "T.E."
-            elif maks:
-                # maksimumun altında sağlıklı değer (örn maks*0.05–0.6)
-                deg = _bicimle_sayi(_r.uniform(maks * 0.05, maks * 0.6))
-            else:
-                deg = "T.E."
-            _yaz_bos(t.rows[ri].cells[c+1], deg, ri == 6)
+    # KULLANICI KURALI: impurite değerleri asla 0.07'den yüksek olmaz ve spek
+    # üst sınırını da aşmaz.
+    ust = 0.07
+    if maks:
+        ust = min(ust, maks)
+    # Satır etiketleri
+    _yaz_sol(t.rows[4].cells[0], "Numune 1")
+    _yaz_sol(t.rows[5].cells[0], "Numune 2")
+    _yaz_sol(t.rows[6].cells[0], "Sonuç", True)
+    # Numune 1/2 üret, Sonuç = ortalama; T.E. ise hepsi T.E.
+    for c in range(SERI_SAYISI):
+        if te:
+            n1 = n2 = s = "T.E."
+        else:
+            v1 = round(_r.uniform(0.0, ust), 2)
+            v2 = round(_r.uniform(0.0, ust), 2)
+            n1, n2 = _bicimle_sayi(v1), _bicimle_sayi(v2)
+            s = _bicimle_sayi(round((v1 + v2) / 2, 2))
+        _yaz_bos(t.rows[4].cells[c+1], n1)
+        _yaz_bos(t.rows[5].cells[c+1], n2)
+        _yaz_bos(t.rows[6].cells[c+1], s, True)
     if te:
         np = doc.add_paragraph()
         nr = np.add_run("T.E.: Tespit edilemedi.")
@@ -975,6 +1031,45 @@ def _ekle_limit_tablosu(doc, proje, baslik, limit_metni, no):
     _yaz_bos(t.rows[4].cells[0], "Sonuç", True)
     for c in range(SERI_SAYISI):
         _yaz_bos(t.rows[4].cells[c+1], limit_metni, False)
+
+
+def _ekle_sonuc_sizdirmazlik(doc, proje, test, no):
+    """
+    Sızdırmazlık (şablon Tablo.77): Baş/Orta/Son satırları, her seri 3 alt sütun
+    (1/2/3), tüm hücreler 'Uygun'; en altta Sonuç satırı (seri başına 'Uygun').
+    """
+    _sonuc_basligi(doc, no, test.ad)
+    # Test + Spesifikasyon + Numuneler(SeriNo) + altbaşlık(1/2/3) + Baş/Orta/Son + Sonuç
+    t = _yeni_tablo(doc, 4 + 3 + 1, SERI_SAYISI * 3 + 1)
+    _yaz_bos(t.rows[0].cells[0], "Test", True)
+    t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI * 3])
+    _yaz_sol(t.rows[0].cells[1], test.ad)
+    _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
+    t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI * 3])
+    _yaz_sol(t.rows[1].cells[1], test.spesifikasyon.metni_olustur() or "Sızdırmamalı")
+    # Numuneler / Seri No (3'er birleşik)
+    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
+    col = 1
+    for sno in _seri_nolar(proje):
+        a = t.rows[2].cells[col]; a.merge(t.rows[2].cells[col+2])
+        _yaz_bos(a, f"Seri No: {sno}", True); col += 3
+    # alt başlık: 1/2/3
+    t.rows[2].cells[0].merge(t.rows[3].cells[0])
+    col = 1
+    for _ in range(SERI_SAYISI):
+        for n in ("1", "2", "3"):
+            _yaz_bos(t.rows[3].cells[col], n, True); col += 1
+    # Baş/Orta/Son satırları → hepsi 'Uygun'
+    for ri, et in [(4, "Baş"), (5, "Orta"), (6, "Son")]:
+        _yaz_bos(t.rows[ri].cells[0], et, True)
+        for c in range(1, SERI_SAYISI * 3 + 1):
+            _yaz_bos(t.rows[ri].cells[c], "Uygun")
+    # Sonuç satırı: her seri (3 birleşik) 'Uygun'
+    _yaz_bos(t.rows[7].cells[0], "Sonuç", True)
+    col = 1
+    for _ in range(SERI_SAYISI):
+        a = t.rows[7].cells[col]; a.merge(t.rows[7].cells[col+2])
+        _yaz_bos(a, "Uygun", True); col += 3
 
 
 def _ekle_sonuc_matris(doc, proje, test, no):
@@ -1026,6 +1121,110 @@ def _genel_degerlendirme_paragrafi(doc):
     return None
 
 
+def _tum_belge_fontu(doc, font_adi: str = "Times New Roman") -> None:
+    """
+    Tüm belgedeki yazı tipini Times New Roman yapar: Normal stil + tüm
+    paragraf run'ları + tüm tablo hücreleri. East Asian font da ayarlanır ki
+    Word her durumda TNR uygulasın.
+    """
+    from docx.oxml.ns import qn
+    # Normal stil
+    try:
+        normal = doc.styles["Normal"]
+        normal.font.name = font_adi
+        rpr = normal.element.get_or_add_rPr()
+        rfonts = rpr.find(qn("w:rFonts"))
+        if rfonts is None:
+            from docx.oxml import OxmlElement
+            rfonts = OxmlElement("w:rFonts"); rpr.append(rfonts)
+        for attr in ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia"):
+            rfonts.set(qn(attr), font_adi)
+    except Exception:
+        pass
+
+    def _run_font(run):
+        run.font.name = font_adi
+        rpr = run._element.get_or_add_rPr()
+        rfonts = rpr.find(qn("w:rFonts"))
+        if rfonts is None:
+            from docx.oxml import OxmlElement
+            rfonts = OxmlElement("w:rFonts"); rpr.append(rfonts)
+        for attr in ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia"):
+            rfonts.set(qn(attr), font_adi)
+
+    for p in doc.paragraphs:
+        for r in p.runs:
+            _run_font(r)
+    for t in doc.tables:
+        for row in t.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    for r in p.runs:
+                        _run_font(r)
+
+
+def _operasyon_basligi(operasyon: str) -> str:
+    """Operasyon adını sonuç bölümü başlığına çevirir."""
+    op = _kucuk((operasyon or "").strip())
+    if not op:
+        return ""
+    if "karış" in op or "karis" in op:
+        return "Karışım Aşaması"
+    if "tablet" in op:
+        return "Tablet Baskı Aşaması"
+    if "film" in op:
+        return "Film Kaplama Aşaması"
+    if "blister" in op or "ambalaj" in op:
+        return "Blisterleme Aşaması"
+    return f"{operasyon} Aşaması"
+
+
+def _operasyon_basligi_yaz(doc, baslik: str):
+    """Sonuç bölümünde aşama başlığını (kalın) yazar."""
+    p = doc.add_paragraph()
+    r = p.add_run(baslik)
+    r.bold = True
+    r.font.size = Pt(11)
+    r.font.name = "Times New Roman"
+    p.paragraph_format.keep_with_next = True
+
+
+def _doldur_genel_degerlendirme(doc, proje: ProjeVerisi) -> None:
+    """
+    Genel Değerlendirme tablolarını (Sapmalar / Sonuçlar ve Değerlendirme / Yorum)
+    sabit standart metinlerle doldurur. Bu metinler her PVR'de aynıdır.
+    """
+    urun = _urun(proje).upper() if hasattr(_urun(proje), "upper") else str(_urun(proje))
+    yorum = ("Yapılan üretimlerin validasyonları tamamlandıktan sonra hazırlanmış "
+             f"olan rapor üretilecek olan {urun}'in sürekli olarak aynı "
+             "spesifikasyonlarda üretiminin sağlanabileceğini kanıtlamaktadır.")
+    for t in doc.tables:
+        baslik = _kucuk((t.rows[0].cells[0].text or "").strip())
+        if baslik.startswith("sapmalar") and len(t.rows) >= 2:
+            if not t.rows[1].cells[0].text.strip():
+                _hucre_kalin_yaz(t.rows[1].cells[0], "Sapma gözlenmemiştir.")
+                _hucre_kalin_yaz(t.rows[1].cells[1], "U.Y.")
+        elif baslik.startswith("sonuçlar ve değerlendirme") and len(t.rows) >= 2:
+            if not t.rows[1].cells[0].text.strip():
+                _hucre_kalin_yaz(t.rows[1].cells[0],
+                                 "Belirtilen spesifikasyonlara uygun şekilde sonuçlar elde edilmiştir.")
+        elif baslik.startswith("yorum") and len(t.rows) >= 2:
+            if not t.rows[1].cells[0].text.strip():
+                _hucre_kalin_yaz(t.rows[1].cells[0], yorum)
+
+
+def _hucre_kalin_yaz(cell, metin):
+    """Genel Değerlendirme hücresine kalın, Times New Roman metin yazar."""
+    from docx.shared import RGBColor
+    cell.text = ""
+    p = cell.paragraphs[0]
+    r = p.add_run(metin)
+    r.bold = True
+    r.font.name = "Times New Roman"
+    r.font.size = Pt(10)
+    r.font.color.rgb = RGBColor(0, 0, 0)
+
+
 def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
     """
     PVR sonuç tablolarını şablondaki 'GENEL DEĞERLENDİRME' başlığının ÖNÜNE ekler.
@@ -1045,29 +1244,44 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
     r.bold = True; r.font.size = Pt(12)
 
     no = 11
+    onceki_op = None
     for test in proje.spek_karti.testler:
         tip = test.tablo_tipi
+        ad_l = _kucuk(test.ad)
+
+        # "İlgili Bileşikler" BAŞLIK testi (alt impuriteleri ayrı tablolarda
+        # üretilir) → ayrı bir özet tablo BASILMAZ; şablonda yoktur.
+        if ("ilgili bileşik" in ad_l or "ilgili bilesik" in ad_l) and \
+           tip in (TabloTipi.TEK_SONUC, TabloTipi.IKI_NUMUNE):
+            continue
+
+        # Operasyon başlığı: aşama değiştiğinde okunabilir başlık yaz
+        op_baslik = _operasyon_basligi(test.operasyon)
+        if op_baslik and op_baslik != onceki_op:
+            _operasyon_basligi_yaz(doc, op_baslik)
+            onceki_op = op_baslik
+
         if test.mikrobiyolojik or tip is TabloTipi.MATRIS:
             _ekle_sonuc_matris(doc, proje, test, no)
-        elif "ortalama ağırlık" in test.ad.lower():
+        elif "sızdırmazlık" in ad_l or "sizdirmazlik" in ad_l:
+            _ekle_sonuc_sizdirmazlik(doc, proje, test, no)
+        elif "ortalama ağırlık" in ad_l:
             _ekle_sonuc_ortalama_agirlik(doc, proje, test, no)
         elif tip is TabloTipi.TEK_SONUC:
             _ekle_sonuc_tek(doc, proje, test, no)
         elif tip is TabloTipi.IKI_NUMUNE:
-            if "miktar tayini" in test.ad.lower():
+            if "miktar tayini" in ad_l:
                 _ekle_sonuc_miktar(doc, proje, test, no)
             else:
                 _ekle_sonuc_iki(doc, proje, test, no)
         elif tip is TabloTipi.ON_NUMUNE:
             _ekle_sonuc_on(doc, proje, test, no)
         elif tip is TabloTipi.BOS_NOKTA:
-            if "dissol" in test.ad.lower():
+            if "dissol" in ad_l:
                 _ekle_sonuc_bos(doc, proje, test, no, ns=6)
             else:
                 _ekle_sonuc_bos(doc, proje, test, no)
         elif tip is TabloTipi.AGIRLIK_TEKDUZELIGI:
-            # Sapma limitleri (sapabilir/sapmamalı) ARTIK ana tablonun
-            # spesifikasyon hücresinde gösterilir; ayrı limit tablosu üretilmez.
             _ekle_sonuc_agirlik(doc, proje, test, no)
         else:
             _ekle_sonuc_tek(doc, proje, test, no)
@@ -1220,6 +1434,16 @@ def _norm_basit(s: str) -> str:
     tr = str.maketrans({"ı": "i", "İ": "i", "ş": "s", "ç": "c", "ö": "o",
                         "ü": "u", "ğ": "g", "I": "i"})
     return (s or "").translate(tr).lower()
+
+
+def _kucuk(metin: str) -> str:
+    """Türkçe-güvenli küçük harf ('İ'.lower() combining-dot sorununu önler)."""
+    if not metin:
+        return ""
+    return (metin.replace("İ", "i").replace("I", "ı")
+            .replace("Ş", "ş").replace("Ğ", "ğ")
+            .replace("Ü", "ü").replace("Ö", "ö").replace("Ç", "ç")
+            .lower())
 
 
 def _dikey_ok_xml(yukseklik_emu=180000):
@@ -1795,6 +2019,7 @@ def pvp_uret(proje: ProjeVerisi, cikti_yolu: str | Path) -> Path:
     with _turetilmis_testlerle(proje):
         doc = Document(str(_sablon_yolu("PVP_sablon.docx")))
         _ortak_doldur(doc, proje, rapor=False)
+        _tum_belge_fontu(doc)
         yol = Path(cikti_yolu)
         doc.save(str(yol))
     return yol
@@ -1809,6 +2034,8 @@ def pvr_uret(proje: ProjeVerisi, cikti_yolu: str | Path, veri_uret: bool = True,
         doc = Document(str(_sablon_yolu("PVP_sablon.docx")))
         _ortak_doldur(doc, proje, rapor=True)
         _doldur_sonuclar(doc, proje)
+        _doldur_genel_degerlendirme(doc, proje)
+        _tum_belge_fontu(doc)
         yol = Path(cikti_yolu)
         doc.save(str(yol))
     return yol

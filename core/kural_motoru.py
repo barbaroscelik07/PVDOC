@@ -169,11 +169,13 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
             for em in etkenler:
                 cikti.append(_yeni(f"{em} Elek Testi", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
             for em in etkenler:
-                cikti.append(_yeni(f"{em} Bulk ve Tap Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
+                cikti.append(_yeni(f"{em} Bulk Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
+                cikti.append(_yeni(f"{em} Tap Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
         else:
             cikti.append(_yeni("Görünüş", "Karıştırma", TabloTipi.TEK_SONUC, gor_kar, ipk=True))
             cikti.append(_yeni("Elek Testi", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
-            cikti.append(_yeni("Bulk ve Tap Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
+            cikti.append(_yeni("Bulk Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
+            cikti.append(_yeni("Tap Dansite", "Karıştırma", TabloTipi.TEK_SONUC, BILGI, yildiz=True))
             for em in etkenler:
                 cikti.append(_yeni(f"{em} Karışım Tekdüzeliği", "Karıştırma",
                                    TabloTipi.ON_NUMUNE, SABIT_KARISIM_SPEK, yildiz=True))
@@ -208,8 +210,15 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
                            tablet_ipk.get("Kalınlık", ""), ipk=True))
         cikti.append(_yeni("Çap", "Tablet Baskı", TabloTipi.BOS_NOKTA,
                            tablet_ipk.get("Çap", ""), ipk=True))
-        cikti.append(_yeni("Sertlik", "Tablet Baskı", TabloTipi.TEK_SONUC,
-                           tablet_ipk.get("Sertlik", ""), ipk=True))
+        _sertlik_bitmis = _bul(bitmis_testler, "sertlik")
+        if tablet_ipk.get("Sertlik"):
+            cikti.append(_yeni("Sertlik", "Tablet Baskı", TabloTipi.BOS_NOKTA,
+                               tablet_ipk.get("Sertlik"), ipk=True))
+        elif _sertlik_bitmis is not None:
+            cikti.append(_yeni("Sertlik", "Tablet Baskı", TabloTipi.BOS_NOKTA,
+                               kaynak_spek=_sertlik_bitmis.spesifikasyon, ipk=True))
+        else:
+            cikti.append(_yeni("Sertlik", "Tablet Baskı", TabloTipi.BOS_NOKTA, "", ipk=True))
         cikti.append(_yeni("Aşınma", "Tablet Baskı", TabloTipi.TEK_SONUC, ASINMA_SPEK, ipk=True))
         cikti.append(_yeni("Dağılma", "Tablet Baskı", TabloTipi.BOS_NOKTA, TABLET_DAGILMA, ipk=True))
         nem = _bul(bitmis_testler, "nem")

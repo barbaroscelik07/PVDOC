@@ -25,6 +25,19 @@ from core.models import (
 )
 
 
+def _kucuk(metin: str) -> str:
+    """
+    Türkçe-güvenli küçük harf. Python'da 'İ'.lower() → 'i̇' (combining dot)
+    olduğundan 'içerik' gibi aramalar bozulur. Önce İ/I'yı normalize ederiz.
+    """
+    if not metin:
+        return ""
+    return (metin.replace("İ", "i").replace("I", "ı")
+            .replace("Ş", "ş").replace("Ğ", "ğ")
+            .replace("Ü", "ü").replace("Ö", "ö").replace("Ç", "ç")
+            .lower())
+
+
 def _metinden_sayilar(metin: str) -> list[float]:
     """
     Spesifikasyon metninden sayıları çıkarır.
@@ -171,13 +184,13 @@ def _film_asamasi(test: Test) -> bool:
     kısım (tablet vs film) ayrımı operasyon adından belirlenir.
     'Film Kaplama' / 'Film Kaplam' → film; aksi halde (Tablet Baskı vb.) → tablet.
     """
-    op = (test.operasyon or "").lower()
+    op = _kucuk(test.operasyon or "")
     return "film" in op
 
 
 def _testtipi(ad: str) -> str:
     """Test adından özel sonuç-üretim tipini döndürür (band seçimi için)."""
-    a = ad.lower()
+    a = _kucuk(ad)
     if "sertlik" in a:
         return "sertlik"
     if "dağılma" in a or "dagilma" in a:
@@ -267,9 +280,14 @@ def _sertlik_araligi(spek: Spesifikasyon) -> tuple[float, float]:
     if spek.maksimum_deger is not None:
         alt, ust = _interpolasyon(spek.maksimum_deger, _SERTLIK_MAX)
         return alt, min(ust, spek.maksimum_deger)   # max'ın üstüne çıkma
-    # Limit yoksa metinden dene
+    # Limit yoksa metinden dene (min mi max mı, metinden anla)
+    metin = _kucuk(spek.spesifikasyon_metni or "")
     sayilar = _metinden_sayilar(spek.spesifikasyon_metni or "")
     if sayilar:
+        if "maks" in metin or "max" in metin or "≤" in metin or "<" in metin:
+            alt, ust = _interpolasyon(sayilar[0], _SERTLIK_MAX)
+            return alt, min(ust, sayilar[0])
+        # aksi halde minimum varsay
         alt, ust = _interpolasyon(sayilar[0], _SERTLIK_MIN)
         return max(alt, sayilar[0]), ust
     return 7.0, 9.0
@@ -359,28 +377,48 @@ def _uretim_sinirlari(spek: Spesifikasyon) -> tuple:
 
 def _tek_sonuc(spek: Spesifikasyon, test_adi: str = "") -> dict:
     """
-    3 seri × tek değer/metin.
-    - Görünüş → sonuç 'Uygun'  (spesifikasyon 'Beyaz toz' olsa bile).
-    - Teşhis  → sonuç 'Pozitif'.
-    - Diğer METIN/BILGI → sabit_sonuc (varsa) yoksa 'Uygun'.
-    - Sayısal tip (Elek Testi, Bulk/Tap Dansite): spek bandından DEĞER üretilir.
+    3 seri × tek değer/metin. Sonuç tipi ADA göre belirlenir (limit türünden
+    bağımsız), çünkü türetilmiş testlerde limit_turu güvenilmez olabilir.
+    - Görünüş → 'Uygun'
+    - Teşhis  → 'Pozitif'
+    - Boyar Madde → 'Pozitif'
+    - Nem → %1.07–2.21 (2 ondalık, spek max'ı asla aşmaz)
+    - İçerik Tekdüzeliği (AV) → 2.19–2.85
+    - Aşınma → '%0.XXX' (max×0.2–0.3)
+    - Diğer METIN/BILGI → sabit_sonuc (varsa) yoksa 'Uygun'
+    - Sayısal (Elek Testi vb.) → spek bandından değer
     """
-    ad = test_adi.lower()
-    if spek.limit_turu in (LimitTuru.METIN, LimitTuru.BILGI):
-        # Görünüş/Teşhis/Boyar Madde → metin sonuç
-        if "görünüş" in ad or "gorunus" in ad:
-            return {"seriler": ["Uygun" for _ in range(SERI_SAYISI)]}
-        if "teşhis" in ad or "teshis" in ad:
-            return {"seriler": ["Pozitif" for _ in range(SERI_SAYISI)]}
-        if "boyar" in ad:
-            return {"seriler": ["Pozitif" for _ in range(SERI_SAYISI)]}
-        # Elek/Dansite gibi sayısal sonuç: alt/üst limit verilmişse DEĞER üret
-        if spek.alt_limit is not None and spek.ust_limit is not None:
-            alt, ust = _uretim_araligi(spek)
-            return {"seriler": [f"{_deger(spek, alt, ust)} {spek.birim}".strip()
+    ad = _kucuk(test_adi)
+
+    # --- ADA göre öncelikli metin sonuçlar (limit türünden bağımsız) ---
+    if "görünüş" in ad or "gorunus" in ad:
+        return {"seriler": ["Uygun" for _ in range(SERI_SAYISI)]}
+    if "teşhis" in ad or "teshis" in ad:
+        return {"seriler": ["Pozitif" for _ in range(SERI_SAYISI)]}
+    if "boyar" in ad:
+        return {"seriler": ["Pozitif" for _ in range(SERI_SAYISI)]}
+
+    # --- Nem: %1.07–2.21, 2 ondalık, spek max'ı asla aşma ---
+    if "nem" in ad:
+        maks = spek.maksimum_deger
+        if maks is None:
+            sayilar = _metinden_sayilar(spek.spesifikasyon_metni or "")
+            maks = sayilar[0] if sayilar else None
+        ust = 2.21
+        if maks is not None:
+            ust = min(ust, maks)
+        alt = min(1.07, ust)
+        return {"seriler": [_bicimle(round(random.uniform(alt, ust), 2))
+                            for _ in range(SERI_SAYISI)]}
+
+    # --- İçerik Tekdüzeliği (AV'li spesifikasyon): 2.19–2.85 ---
+    if "içerik tekdüzeliği" in ad or "icerik tekduzeligi" in ad:
+        metin = (spek.spesifikasyon_metni or "").upper()
+        if "AV" in metin or "KABUL DEĞERI" in metin or "KABUL DEĞERİ" in metin:
+            return {"seriler": [_bicimle(round(random.uniform(2.19, 2.85), 2))
                                 for _ in range(SERI_SAYISI)]}
-        return {"seriler": [(spek.sabit_sonuc or "Uygun") for _ in range(SERI_SAYISI)]}
-    # Aşınma: max×0.2 – max×0.3, çıktı "%0.XXX" (3 ondalık), tek satır.
+
+    # --- Aşınma: max×0.2 – max×0.3, '%0.XXX' (3 ondalık) ---
     if "aşınma" in ad or "asinma" in ad:
         maks = spek.maksimum_deger
         if maks is None:
@@ -388,6 +426,15 @@ def _tek_sonuc(spek: Spesifikasyon, test_adi: str = "") -> dict:
             maks = sayilar[0] if sayilar else 1.0
         return {"seriler": [f"%{round(random.uniform(maks * 0.2, maks * 0.3), 3):.3f}"
                             for _ in range(SERI_SAYISI)]}
+
+    # --- METIN/BILGI tip: sayısal (Elek) veya sabit metin ---
+    if spek.limit_turu in (LimitTuru.METIN, LimitTuru.BILGI):
+        if spek.alt_limit is not None and spek.ust_limit is not None:
+            alt, ust = _uretim_araligi(spek)
+            return {"seriler": [f"{_deger(spek, alt, ust)} {spek.birim}".strip()
+                                for _ in range(SERI_SAYISI)]}
+        return {"seriler": [(spek.sabit_sonuc or "Uygun") for _ in range(SERI_SAYISI)]}
+
     alt, ust = _uretim_araligi(spek)
     return {"seriler": [f"{_deger(spek, alt, ust)} {spek.birim}".strip()
                         for _ in range(SERI_SAYISI)]}
@@ -395,24 +442,61 @@ def _tek_sonuc(spek: Spesifikasyon, test_adi: str = "") -> dict:
 
 def _iki_numune(spek: Spesifikasyon) -> dict:
     """
-    Numune-1, Numune-2 + Sonuç(ortalama), her seri için.
-    Maksimum değeri 'T.E.' (tespit edilemedi) ise tüm sonuçlar 'T.E.' olur.
+    Numune-1, Numune-2 + Sonuç(ortalama), her seri için (İlgili Bileşikler/impurite).
+    - Maksimum değeri 'T.E.' ise tüm sonuçlar 'T.E.' olur.
+    - Aksi halde KULLANICI KURALI: impurite değerleri ASLA 0.07'den yüksek
+      üretilmez (ve spesifikasyon üst sınırını da aşmaz). Değerler 0.00–0.07
+      bandında, 2 ondalık.
     """
     te = (spek.maksimum_metin or "").strip().upper().replace(" ", "")
     if te in ("T.E.", "T.E", "TE", "TESPİTEDİLEMEDİ", "TESPITEDILEMEDI"):
         return {"te": True, "seriler": [
             {"numune_1": "T.E.", "numune_2": "T.E.", "sonuc": "T.E."}
             for _ in range(SERI_SAYISI)]}
-    alt, ust = _uretim_araligi(spek)
+    # İmpurite üst sınırı: 0.07 (kural) ve varsa spek max'ı geçme
+    ust = 0.07
+    maks = spek.maksimum_deger
+    if maks is None:
+        sayilar = _metinden_sayilar(spek.spesifikasyon_metni or spek.maksimum_metin or "")
+        maks = sayilar[0] if sayilar else None
+    if maks is not None:
+        ust = min(ust, maks)
+    alt = 0.0
     seriler = []
     for _ in range(SERI_SAYISI):
-        n1 = _deger(spek, alt, ust)
-        n2 = _deger(spek, alt, ust)
+        n1 = round(random.uniform(alt, ust), 2)
+        n2 = round(random.uniform(alt, ust), 2)
         seriler.append({
             "numune_1": _bicimle(n1), "numune_2": _bicimle(n2),
-            "sonuc": _bicimle((n1 + n2) / 2),
+            "sonuc": _bicimle(round((n1 + n2) / 2, 2)),
         })
     return {"seriler": seriler}
+
+
+def _dansite_ciftleri() -> tuple[list[float], list[float]]:
+    """
+    3 seri için Bulk ve Tap dansite değerleri üretir (g/ml, 2 ondalık).
+    Kullanıcı kuralı:
+      - Bulk değerleri 0.73–0.90 arasında ve 3 seri birbirine yakın.
+      - Carr's Index = (Tap−Bulk)/Tap×100 ve Hausner = Tap/Bulk; toz akışı
+        'excellent' (CI<10, H<1.11) veya 'good' (CI 11–15, H 1.12–1.18) çıkacak
+        şekilde Tap, Bulk'tan türetilir.
+    Dönüş: (bulk_listesi, tap_listesi) — her biri 3 değer.
+    """
+    # 3 seri yakın bulk: bir merkez seç, küçük sapmalarla 3 seri.
+    # Tap = Bulk/(1−CI/100) ≤ 0.90 kalmalı; bu yüzden bulk üst sınırını
+    # CI'ye göre 0.90'ın altında tutarız.
+    merkez = random.uniform(0.74, 0.82)
+    bulk, tap = [], []
+    for _ in range(SERI_SAYISI):
+        ci = random.uniform(5.0, 15.0)
+        # bulk'u öyle seç ki tap = bulk/(1−ci/100) ≤ 0.90 olsun
+        bulk_ust = min(0.88, 0.90 * (1.0 - ci / 100.0))
+        b = round(min(bulk_ust, max(0.73, merkez + random.uniform(-0.015, 0.015))), 2)
+        t = round(min(0.90, b / (1.0 - ci / 100.0)), 2)
+        bulk.append(b)
+        tap.append(t)
+    return bulk, tap
 
 
 def _on_numune(spek: Spesifikasyon) -> dict:
@@ -628,21 +712,52 @@ def tum_testleri_uret(testler: list[Test], tohum: int | None = None) -> None:
     #    spesifikasyonundan türetilir (örn. 700 mg ± %5 → hedef 700).
     ort_agirlik_map: dict[str, Test] = {}
     for test in testler:
-        if "ortalama ağırlık" in test.ad.lower():
-            ort_agirlik_map[(test.operasyon or "").lower()] = test
+        if "ortalama ağırlık" in _kucuk(test.ad):
+            ort_agirlik_map[_kucuk(test.operasyon or "")] = test
     for test in testler:
         if test.tablo_tipi is TabloTipi.AGIRLIK_TEKDUZELIGI:
             if _hedef_metinden(test.spesifikasyon) is None:
-                esi = ort_agirlik_map.get((test.operasyon or "").lower())
+                esi = ort_agirlik_map.get(_kucuk(test.operasyon or ""))
                 if esi is not None:
                     test._hedef_devralinan = _hedef_metinden(esi.spesifikasyon)
+
+    # 1.5) BULK/TAP DANSİTE eşleştirme: aynı (etken+operasyon) için Bulk ve Tap
+    #      birlikte, Carr's Index/Hausner tutarlı üretilir. Değer önceden hesaplanıp
+    #      ilgili testlere yazılır; ana döngü bunları atlar.
+    dansite_uretildi: set = set()
+    for test in testler:
+        ad = _kucuk(test.ad)
+        if "bulk dansite" in ad or "tap dansite" in ad:
+            kok = ad.replace("bulk dansite", "").replace("tap dansite", "").strip()
+            anahtar = (kok, _kucuk(test.operasyon or ""))
+            if anahtar in dansite_uretildi:
+                continue
+            bulk_t = tap_t = None
+            for t2 in testler:
+                a2 = _kucuk(t2.ad)
+                kok2 = a2.replace("bulk dansite", "").replace("tap dansite", "").strip()
+                if kok2 == kok and _kucuk(t2.operasyon or "") == anahtar[1]:
+                    if "bulk dansite" in a2:
+                        bulk_t = t2
+                    elif "tap dansite" in a2:
+                        tap_t = t2
+            bulk_v, tap_v = _dansite_ciftleri()
+            if bulk_t is not None:
+                bulk_t.sonuc_verisi = {"seriler": [f"{_bicimle(v)} g/ml" for v in bulk_v]}
+            if tap_t is not None:
+                tap_t.sonuc_verisi = {"seriler": [f"{_bicimle(v)} g/ml" for v in tap_v]}
+            dansite_uretildi.add(anahtar)
+
+    # 1.6) MİKTAR TAYİNİ aşama ilişkisi: aynı etken için Karışım > Tablet Baskı >
+    #      Film Kaplama sıralı, aralarında küçük fark (kullanıcı kuralı).
+    _miktar_asama_iliskisi(testler)
 
     # 1) Tüm Ağırlık Tekdüzeliği testlerini önce üret (operasyona göre indeksle)
     agirlik_map: dict[str, Test] = {}
     for test in testler:
         if test.tablo_tipi is TabloTipi.AGIRLIK_TEKDUZELIGI:
             test.sonuc_verisi = test_verisi_uret(test)
-            agirlik_map[(test.operasyon or "").lower()] = test
+            agirlik_map[_kucuk(test.operasyon or "")] = test
 
     # 2) Diğer testleri üret; Ortalama Ağırlık'ı aynı operasyondaki Ağırlık
     #    Tekdüzeliği'nden türet. Aynı operasyonda eşi yoksa mevcut tek tabletten
@@ -650,8 +765,14 @@ def tum_testleri_uret(testler: list[Test], tohum: int | None = None) -> None:
     for test in testler:
         if test.tablo_tipi is TabloTipi.AGIRLIK_TEKDUZELIGI:
             continue
-        if "ortalama ağırlık" in test.ad.lower() and agirlik_map:
-            esi = agirlik_map.get((test.operasyon or "").lower())
+        ad_l = _kucuk(test.ad)
+        # Bulk/Tap dansite ve Miktar Tayini önceden üretildiyse atla
+        if ("bulk dansite" in ad_l or "tap dansite" in ad_l) and test.sonuc_verisi:
+            continue
+        if "miktar tayini" in ad_l and test.sonuc_verisi:
+            continue
+        if "ortalama ağırlık" in _kucuk(test.ad) and agirlik_map:
+            esi = agirlik_map.get(_kucuk(test.operasyon or ""))
             if esi is None:
                 # Aynı film/tablet kısmındaki ilk uygun testi seç
                 film = _film_asamasi(test)
@@ -664,6 +785,87 @@ def tum_testleri_uret(testler: list[Test], tohum: int | None = None) -> None:
             test.sonuc_verisi = _ortalama_agirlik_turet(esi, test.spesifikasyon)
         else:
             test.sonuc_verisi = test_verisi_uret(test)
+
+
+def _miktar_asama_iliskisi(testler: list[Test]) -> None:
+    """
+    Aynı etken maddenin Karışım / Tablet Baskı / Film Kaplama aşamalarındaki
+    Miktar Tayini testlerini eşler ve KULLANICI KURALINA göre üretir:
+      - Her seri için aşamalar arası fark küçük (< ~%1).
+      - Sıralama: Karışım > Tablet Baskı > Film Kaplama (en yüksek karışımda).
+    Aşama yapıları farklı olabilir (Karışım: Karışım Tekdüzeliği = ON_NUMUNE;
+    Tablet/Film Miktar Tayini = Baş/Orta/Son). Burada yalnızca 'Miktar Tayini'
+    adlı testler ele alınır; bulunmayan aşama atlanır.
+    """
+    ASAMA_SIRA = {"karıştırma": 0, "tablet baskı": 1, "film kaplama": 2}
+    # etken köküne göre grupla: "Parasetamol Miktar Tayini" -> "parasetamol"
+    gruplar: dict[str, dict] = {}
+    for test in testler:
+        ad = _kucuk(test.ad)
+        if "miktar tayini" not in ad:
+            continue
+        kok = ad.replace("miktar tayini", "").strip()
+        op = _kucuk(test.operasyon or "")
+        gruplar.setdefault(kok, {})[op] = test
+
+    for kok, asama_map in gruplar.items():
+        # hedef değeri herhangi bir aşamanın spekinden al
+        hedef = None
+        for t in asama_map.values():
+            hedef = _hedef_metinden(t.spesifikasyon)
+            if hedef is not None:
+                break
+        if hedef is None:
+            # özel ilişki kurulamıyorsa normal üretime bırak
+            continue
+        # Her seri için bir "karışım taban değeri" seç (hedef..hedef×1.02),
+        # tablet ve film bundan küçük ofsetlerle düşürülür.
+        seri_taban = [random.uniform(hedef, hedef * 1.02) for _ in range(SERI_SAYISI)]
+        for op, test in asama_map.items():
+            sira = ASAMA_SIRA.get(op, 1)
+            # aşama başına küçük düşüş: karışım 0, tablet ~%0.3, film ~%0.6
+            dusus = [0.0, 0.003, 0.006][min(sira, 2)]
+            test.sonuc_verisi = _miktar_tayini_iliskili(
+                test, [v * (1.0 - dusus) for v in seri_taban])
+
+
+def _miktar_tayini_iliskili(test: Test, seri_hedef: list[float]) -> dict:
+    """
+    Miktar Tayini sonucunu, verilen seri-hedef değerleri etrafında üretir.
+    Yapı test tipine göre:
+      - ON_NUMUNE (Karışım Tekdüzeliği): 10 ölçüm + Ortalama, ortalama ≈ seri_hedef.
+      - IKI_NUMUNE / diğer (Tablet/Film Miktar Tayini): Baş/Orta/Son × Numune-1/2.
+    """
+    spek = test.spesifikasyon
+    ond = spek.ondalik or 2
+    if test.tablo_tipi is TabloTipi.ON_NUMUNE:
+        seriler = []
+        for hed in seri_hedef:
+            olcumler = [round(hed + random.uniform(-1.2, 1.2), ond) for _ in range(10)]
+            mevcut = ortalama(olcumler)
+            fark = hed - mevcut
+            olcumler = [round(v + fark, ond) for v in olcumler]
+            seriler.append({
+                "olcumler": [_bicimle(o) for o in olcumler],
+                "ortalama": _bicimle(ortalama(olcumler)),
+            })
+        return {"seriler": seriler}
+    # Baş/Orta/Son × Numune-1/2/Sonuç + seri ortalaması
+    seriler = []
+    for hed in seri_hedef:
+        noktalar = {}
+        nokta_sonuc = []
+        for nokta in NOKTA_ADLARI:
+            n1 = round(hed + random.uniform(-1.0, 1.0), ond)
+            n2 = round(hed + random.uniform(-1.0, 1.0), ond)
+            s = round((n1 + n2) / 2, ond)
+            noktalar[nokta] = {
+                "numune_1": _bicimle(n1), "numune_2": _bicimle(n2),
+                "sonuc": _bicimle(s), "_ham_sonuc": s,
+            }
+            nokta_sonuc.append(s)
+        seriler.append({"noktalar": noktalar, "ortalama": _bicimle(ortalama(nokta_sonuc))})
+    return {"seriler": seriler}
 
 
 def _ortalama_agirlik_turet(agirlik_test: Test, spek: Spesifikasyon) -> dict:

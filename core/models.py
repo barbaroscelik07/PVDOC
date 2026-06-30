@@ -373,9 +373,13 @@ class DokumanBilgisi:
     urun_adi: str = ""                # "Xxx Film Kaplı Tablet"
     pvp_dokuman_no: str = ""          # "AG-PV-xxx"
     pvr_dokuman_no: str = ""          # "AG-PV-xxx-R"
-    revizyon_no: str = "00"
+    revizyon_no: str = "03"           # otomatik 03; kullanıcı değiştirebilir
     revizyon_tarihi: str = UYGULAMA_YOK
-    form_no: str = ""                 # "N-15-0506"
+    # PVP ve PVR için AYRI form numaraları. Otomatik varsayılanlar; kullanıcı
+    # genel bilgi sayfasından değiştirebilir.
+    pvp_form_no: str = "N-15-506"
+    pvr_form_no: str = "N-15-507"
+    form_no: str = ""                 # (eski tek alan; geriye dönük uyumluluk)
 
 
 @dataclass

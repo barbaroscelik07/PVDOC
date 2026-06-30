@@ -1312,14 +1312,67 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
 # Ana üretim
 # ============================================================================
 
+def _revizyon_no_guncelle(doc, revizyon_no: str) -> None:
+    """
+    Header/footer'daki Revizyon No değerini kullanıcının değeriyle günceller.
+    İki yerleşim de desteklenir:
+      - Aynı hücrede etiket+değer ('Revizyon No\\nNumber of Revision\\n00')
+      - Etiket üst satırda, değer alt satırda ayrı hücrede (footer)
+    """
+    if not revizyon_no:
+        return
+    rev = str(revizyon_no).strip()
+
+    def _son_sayiyi_degistir(cell):
+        """Hücredeki saf-sayı paragrafını/run'ını rev ile değiştirir."""
+        for p in cell.paragraphs:
+            # tüm paragraf metni saf sayı mı?
+            if p.text.strip().isdigit() and p.text.strip() != rev:
+                # ilk run'a yaz, kalanları temizle
+                if p.runs:
+                    p.runs[0].text = rev
+                    for r in p.runs[1:]:
+                        r.text = ""
+                continue
+            for r in p.runs:
+                t = r.text.strip()
+                if t.isdigit() and 1 <= len(t) <= 3 and t != rev:
+                    r.text = r.text.replace(t, rev)
+
+    for section in doc.sections:
+        for hf in (section.header, section.footer):
+            for t in hf.tables:
+                ncols = len(t.columns)
+                # Etiket satırında 'Revizyon No' olan SÜTUNU bul
+                rev_col = None
+                for ri, row in enumerate(t.rows):
+                    for ci, cell in enumerate(row.cells):
+                        if "revizyon no" in _kucuk(cell.text) or "revision no" in _kucuk(cell.text):
+                            # Aynı hücrede değer de varsa düzelt
+                            _son_sayiyi_degistir(cell)
+                            rev_col = ci
+                # Footer tipi: etiket üstte, değer altta → o sütunun diğer satırı
+                if rev_col is not None and len(t.rows) >= 2:
+                    for ri, row in enumerate(t.rows):
+                        cell = row.cells[rev_col]
+                        if "revizyon" not in _kucuk(cell.text):  # etiket hücresi değil
+                            _son_sayiyi_degistir(cell)
+
+
 def _placeholder_eslemeleri(proje: ProjeVerisi, rapor: bool) -> dict[str, str]:
     d = proje.dokuman
     urun = _urun(proje)
     dok_no = (d.pvr_dokuman_no if rapor else d.pvp_dokuman_no) or "AG-PV-xxx"
+    # Form No: PVR ise pvr_form_no, PVP ise pvp_form_no (kullanıcı değiştirebilir)
+    form_no = (d.pvr_form_no if rapor else d.pvp_form_no) or ("N-15-507" if rapor else "N-15-506")
     es = {
         "XxxFilm Kaplı Tablet": urun,
         "XxxFİLM TABLET": urun.upper(),
         "AG-PV-xxx": dok_no,
+        # Şablon footer'ındaki sabit form no'yu kullanıcının değeriyle değiştir
+        "N-15-0506": form_no,
+        "N-15-506": form_no,
+        "N-15-507": form_no,
     }
     for i in range(SERI_SAYISI):
         sno = proje.seriler[i].seri_no
@@ -1960,6 +2013,7 @@ def _doldur_uretim_yontemi_eski(doc, proje):
 
 def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
     belgede_degistir(doc, _placeholder_eslemeleri(proje, rapor))
+    _revizyon_no_guncelle(doc, proje.dokuman.revizyon_no)
     _doldur_formul(doc, proje)
     _doldur_kapsanan(doc, proje)
     _doldur_risk(doc, proje)

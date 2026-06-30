@@ -58,9 +58,10 @@ class GenelBilgiModulu(QWidget):
         self.in_urun = satir("Ürün Adı:", "örn. Xxx Film Kaplı Tablet")
         self.in_pvp_no = satir("PVP Doküman No:", "örn. AG-PV-xxx")
         self.in_pvr_no = satir("PVR Doküman No:", "örn. AG-PV-xxx-R")
-        self.in_rev_no = satir("Revizyon No:", "00")
+        self.in_rev_no = satir("Revizyon No:", "03")
         self.in_rev_tarih = satir("Revizyon Tarihi:", "U.Y.")
-        self.in_form_no = satir("Form No:", "örn. N-15-0506")
+        self.in_pvp_form_no = satir("PVP Form No:", "N-15-506")
+        self.in_pvr_form_no = satir("PVR Form No:", "N-15-507")
 
         # Alanlar değişince anında veriye yaz
         self.in_firma.textChanged.connect(lambda t: self._yaz("firma_ismi", t))
@@ -69,7 +70,8 @@ class GenelBilgiModulu(QWidget):
         self.in_pvr_no.textChanged.connect(lambda t: self._yaz("pvr_dokuman_no", t))
         self.in_rev_no.textChanged.connect(lambda t: self._yaz("revizyon_no", t))
         self.in_rev_tarih.textChanged.connect(lambda t: self._yaz("revizyon_tarihi", t))
-        self.in_form_no.textChanged.connect(lambda t: self._yaz("form_no", t))
+        self.in_pvp_form_no.textChanged.connect(lambda t: self._yaz("pvp_form_no", t))
+        self.in_pvr_form_no.textChanged.connect(lambda t: self._yaz("pvr_form_no", t))
 
         kok.addLayout(izgara)
 

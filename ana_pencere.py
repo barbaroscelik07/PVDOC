@@ -44,13 +44,11 @@ MODUL_LISTESI = [
     ("genel",        "1 · Genel Bilgi"),
     ("formul",       "2 · Birim/Seri Formül"),
     ("proses",       "3 · Üretim Yöntemi"),
-    ("diyagram",     "4 · Akış Diyagramı"),
-    ("risk",         "5 · Risk Analizi"),
-    ("ekipman",      "6 · Ekipman Listesi"),
-    ("spek",         "7 · Spesifikasyonlar"),
-    ("numune",       "8 · Numune Alma Planı"),
-    ("sonuc",        "9 · Sonuçlar (PVR)"),
-    ("cikti",        "10 · Çıktı (PVP / PVR)"),
+    ("risk",         "4 · Risk Analizi"),
+    ("ekipman",      "5 · Ekipman Listesi"),
+    ("spek",         "6 · Spesifikasyonlar"),
+    ("numune",       "7 · Numune Alma Planı"),
+    ("cikti",        "8 · Çıktı (PVP / PVR)"),
 ]
 
 

@@ -427,6 +427,17 @@ def _tek_sonuc(spek: Spesifikasyon, test_adi: str = "") -> dict:
         return {"seriler": [f"%{round(random.uniform(maks * 0.2, maks * 0.3), 3):.3f}"
                             for _ in range(SERI_SAYISI)]}
 
+    # --- Elek Testi: 165–195 micron, seriler arası max 10 fark, 'X micron' ---
+    if "elek" in ad:
+        # Tüm seriler bir taban değerin etrafında ±5'lik pencerede üretilir;
+        # böylece herhangi iki seri arasındaki fark en fazla 10 olur.
+        taban = random.randint(170, 190)
+        seriler = []
+        for _ in range(SERI_SAYISI):
+            v = max(165, min(195, taban + random.randint(-5, 5)))
+            seriler.append(f"{v} micron")
+        return {"seriler": seriler}
+
     # --- METIN/BILGI tip: sayısal (Elek) veya sabit metin ---
     if spek.limit_turu in (LimitTuru.METIN, LimitTuru.BILGI):
         if spek.alt_limit is not None and spek.ust_limit is not None:

@@ -204,7 +204,7 @@ class GenelBilgiModulu(QWidget):
             (self.in_firma, d.firma_ismi), (self.in_urun, d.urun_adi),
             (self.in_pvp_no, d.pvp_dokuman_no), (self.in_pvr_no, d.pvr_dokuman_no),
             (self.in_rev_no, d.revizyon_no), (self.in_rev_tarih, d.revizyon_tarihi),
-            (self.in_form_no, d.form_no),
+            (self.in_pvp_form_no, d.pvp_form_no), (self.in_pvr_form_no, d.pvr_form_no),
         ):
             le.blockSignals(True)
             le.setText(deger)

@@ -210,18 +210,102 @@ def _doldur_formul(doc, proje: ProjeVerisi) -> None:
                     for p in cell.paragraphs:
                         paragraf_metni_degistir(p, "{adet}", adet)
 
+    _USTLER = {1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶", 7: "⁷", 8: "⁸", 9: "⁹"}
+
+    def _vf(x, ond):
+        """Türkçe ondalık (virgül) biçimlendirme."""
+        if x is None:
+            return ""
+        return f"{x:.{ond}f}".replace(".", ",")
+
     son = len(proje.hammaddeler) - 1
     idxler = _veri_satirlarini_ayarla(t, 1, len(proje.hammaddeler))
     for sira, (ri, h) in enumerate(zip(idxler, proje.hammaddeler)):
         cells = t.rows[ri].cells
-        # Son satır VEYA ara_toplam satırı kalın
         bold = h.ara_toplam or (sira == son)
-        hucre_yaz(cells[0], h.ad, bold=bold)
+        # Madde adı: kaplama yıldızı adın yanında kalır (örn. "Kaplama Materyali*")
+        ad = h.ad
+        hucre_yaz(cells[0], ad, bold=bold)
         hucre_yaz(cells[1], h.fonksiyon, bold=bold)
-        # Birim formül HER ZAMAN 3 ondalık (3 -> 3.000)
-        hucre_yaz(cells[2], "" if h.birim_formul is None else f"{h.birim_formul:.3f}", bold=bold)
-        hucre_yaz(cells[3], "" if h.yuzde_icerik is None else f"{h.yuzde_icerik:g}", bold=bold)
-        hucre_yaz(cells[4], "" if h.seri_miktar is None else f"{h.seri_miktar:.3f}", bold=bold)
+        # Birim Formül: virgülden sonra 3 hane
+        hucre_yaz(cells[2], _vf(h.birim_formul, 3), bold=bold)
+        # % İçerik: virgülden sonra 2 hane
+        hucre_yaz(cells[3], _vf(h.yuzde_icerik, 2), bold=bold)
+        # Seri Boyu: 3 hane + üst-karakter numara (etken/potens ayarlayıcı için)
+        seri_txt = _vf(h.seri_miktar, 3)
+        if h.ust_numara and h.ust_numara in _USTLER:
+            seri_txt = seri_txt + _USTLER[h.ust_numara]
+        hucre_yaz(cells[4], seri_txt, bold=bold)
+
+    # --- Tablo altı notlar (Tablo 1'in hemen ardına, bir kez) ---
+    if not getattr(proje, "_formul_notlari_yazildi", False):
+        _formul_notlari_ekle(doc, proje, _USTLER, tablo=t)
+        proje._formul_notlari_yazildi = True
+
+
+def _formul_notlari_ekle(doc, proje, _USTLER, tablo=None):
+    """
+    Birim formül tablosunun ALTINA notları ekler (kaplama bileşimi, potens,
+    potens ayarlayıcı). tablo verilirse notlar tablonun hemen ardına eklenir.
+    """
+    from docx.oxml.ns import qn as _qn
+    seri_nolar = [s.seri_no for s in proje.seriler if s.seri_no]
+    if len(seri_nolar) > 1:
+        seri_metin = ", ".join(seri_nolar[:-1]) + " ve " + seri_nolar[-1]
+    else:
+        seri_metin = seri_nolar[0] if seri_nolar else ""
+
+    # Notları tablonun hemen ardına eklemek için ekleme noktası
+    anchor = tablo._tbl if tablo is not None else None
+    olusturulan = []
+
+    def _not_para(metin, ust=None):
+        p = doc.add_paragraph()
+        r = p.add_run((ust + " " if ust else "") + metin)
+        r.font.name = "Times New Roman"
+        r.font.size = Pt(10)
+        olusturulan.append(p._p)
+        return p
+
+    # Kaplama materyali bileşimi notu (yıldız sayısına göre)
+    for h in proje.hammaddeler:
+        if getattr(h, "kaplama_yildiz", 0) and h.kaplama_bilesimi:
+            yildiz = "*" * h.kaplama_yildiz
+            _not_para(f"{yildiz}: Kaplama Materyali Bileşimi (% a/a) : {h.kaplama_bilesimi}")
+
+    # Potens notları (etken maddeler) + fazlalık toplamı
+    fazlalik_toplam = 0.0
+    for h in proje.hammaddeler:
+        if getattr(h, "etken", False) and h.potens and h.seri_miktar:
+            teorik = h.seri_miktar
+            gercek = teorik * 100.0 / h.potens
+            fazlalik_toplam += (gercek - teorik)
+            ust = _USTLER.get(h.ust_numara or 0, "")
+            _not_para(
+                f": {seri_metin} serileri için teorik olarak " +
+                f"{teorik:.2f}".replace(".", ",") +
+                " kg tartılması gereken etkin madde miktarı, miktar ayarlaması sonrası " +
+                f"{gercek:.2f}".replace(".", ",") + " kg olarak tartılmalıdır.", ust=ust)
+
+    # Potens ayarlayıcı notu
+    for h in proje.hammaddeler:
+        if getattr(h, "potens_ayarlayici", False) and h.seri_miktar:
+            teorik = h.seri_miktar
+            gercek = teorik - fazlalik_toplam
+            ust = _USTLER.get(h.ust_numara or 0, "")
+            _not_para(
+                f": {seri_metin} serileri için teorik olarak " +
+                f"{teorik:.2f}".replace(".", ",") +
+                f" kg tartılması gereken {h.ad} miktarı, miktar ayarlaması sonrası " +
+                f"{gercek:.2f}".replace(".", ",") + " kg olarak tartılmalıdır.", ust=ust)
+
+    # Notları tablonun hemen ardına taşı (sona değil)
+    if anchor is not None and olusturulan:
+        ref = anchor
+        for p_el in olusturulan:
+            p_el.getparent().remove(p_el)
+            ref.addnext(p_el)
+            ref = p_el
 
 
 def _doldur_kapsanan(doc, proje: ProjeVerisi) -> None:
@@ -383,6 +467,29 @@ def _doldur_spek(doc, proje: ProjeVerisi) -> None:
         hucre_yaz(cells[1], op)
         hucre_yaz(cells[2], ad)
         hucre_yaz(cells[3], spek)
+
+    # --- Boş Op No / Operasyon hücrelerini üstteki grup başlığıyla BİRLEŞTİR ---
+    # Ardışık (başlık + boş alt satırlar) bloklarını topla, her bloğu Op No ve
+    # Operasyon sütunlarında TEK seferde dikey birleştir.
+    bloklar = []  # (bas_ri, son_ri)
+    bas = None
+    for k, (opno, op, ad, spek) in enumerate(plan):
+        ri = idxler[k]
+        if opno.strip():
+            if bas is not None and bas[1] > bas[0]:
+                bloklar.append((bas[0], bas[1]))
+            bas = [ri, ri]
+        else:
+            if bas is not None:
+                bas[1] = ri
+    if bas is not None and bas[1] > bas[0]:
+        bloklar.append((bas[0], bas[1]))
+    for bas_ri, son_ri in bloklar:
+        try:
+            t.rows[bas_ri].cells[0].merge(t.rows[son_ri].cells[0])
+            t.rows[bas_ri].cells[1].merge(t.rows[son_ri].cells[1])
+        except Exception:
+            pass
     _tablo_genislik_duzelt(t)
     return
 
@@ -585,7 +692,7 @@ def _bicimle(metin):
     return str(metin)
 
 
-def _yaz_bos(cell, metin, bold=False, punto=12):
+def _yaz_bos(cell, metin, bold=False, punto=11):
     from docx.shared import RGBColor
     p = cell.paragraphs[0]
     r = p.add_run(_bicimle(metin))
@@ -605,7 +712,7 @@ def _yaz_sol(cell, metin, bold=False):
     p = cell.paragraphs[0]
     r = p.add_run(str(metin))
     r.bold = bold
-    r.font.size = Pt(12)
+    r.font.size = Pt(11)
     r.font.name = "Times New Roman"
     r.font.color.rgb = RGBColor(0, 0, 0)
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -1271,6 +1378,39 @@ def _hucre_kalin_yaz(cell, metin):
     r.font.color.rgb = RGBColor(0, 0, 0)
 
 
+def _ekle_sonuc_boyar(doc, proje, test_ad, spek_metni, no):
+    """Boyar Madde alt testi için sonuç tablosu (Test | ad, Spesifikasyon,
+    Numuneler/Seri No, Sonuç=Pozitif × seri). Tüm tablolar aynı yapıda."""
+    _sonuc_basligi(doc, no, "Boyar Madde Tanıması")
+    t = _yeni_tablo(doc, 4, SERI_SAYISI + 1)
+    _yaz_bos(t.rows[0].cells[0], "Test", True)
+    t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI])
+    _yaz_sol(t.rows[0].cells[1], test_ad)
+    _yaz_bos(t.rows[1].cells[0], "Spesifikasyon", True)
+    t.rows[1].cells[1].merge(t.rows[1].cells[SERI_SAYISI])
+    _yaz_sol(t.rows[1].cells[1], spek_metni or "")
+    _yaz_bos(t.rows[2].cells[0], "Numuneler", True)
+    for c, sno in enumerate(_seri_nolar(proje), 1):
+        _yaz_bos(t.rows[2].cells[c], f"Seri No: {sno}", True)
+    _yaz_bos(t.rows[3].cells[0], "Sonuç", True)
+    for c in range(1, SERI_SAYISI + 1):
+        _yaz_bos(t.rows[3].cells[c], "Pozitif", True)
+
+
+def _test_to_impurite(test):
+    """Türetilmiş impurite/enantiomerik alt-satır Test'inden, _ekle_sonuc_impurite'ın
+    beklediği hafif bir impurite nesnesi üretir."""
+    from core.models import Impurite
+    sp = test.spesifikasyon
+    metin = sp.spesifikasyon_metni or sp.metni_olustur() or ""
+    return Impurite(
+        ad=test.ad.lstrip("—-– ").strip(),
+        limit_metni=metin,
+        maksimum_deger=sp.maksimum_deger,
+        te=(str(sp.maksimum_metin or "").upper().replace(" ", "").endswith("T.E.")),
+    )
+
+
 def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
     """
     PVR sonuç tablolarını şablondaki 'GENEL DEĞERLENDİRME' başlığının ÖNÜNE ekler.
@@ -1295,19 +1435,15 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
         tip = test.tablo_tipi
         ad_l = _kucuk(test.ad)
 
-        # İlgili Bileşikler ve Enantiomerik İmpurite sonuç tabloları AYRICA
-        # em.impuriteler / em.enantiomerik döngülerinde üretilir. Buradaki grup
-        # başlıklarını ve alt satırlarını (— ile başlayan) ATLA — çift basımı önle.
-        if getattr(test, "_impurite", False) or getattr(test, "_enantiomerik", False):
-            continue
+        # Grup başlıkları (İlgili Bileşikler / Enantiomerik) tablo üretmez.
         if getattr(test, "_grup_baslik", False) and \
            ("ilgili" in ad_l or "enantiomerik" in ad_l):
             continue
         if ("ilgili bileşik" in ad_l or "ilgili bilesik" in ad_l) and \
-           tip in (TabloTipi.TEK_SONUC, TabloTipi.IKI_NUMUNE):
+           tip in (TabloTipi.TEK_SONUC, TabloTipi.IKI_NUMUNE) and \
+           not getattr(test, "_impurite", False):
             continue
-        # Boyar Madde alt satırı (Titanyum dioksit) tek başına sonuç tablosu OLMAZ;
-        # boyar madde tek tablo olarak başlık testinde render edilir.
+        # Boyar Madde alt satırı tek başına burada işlenmez (grup başlığında ele alınır).
         if getattr(test, "_boyar_alt", False):
             continue
 
@@ -1316,6 +1452,33 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
         if op_baslik and op_baslik != onceki_op:
             _operasyon_basligi_yaz(doc, op_baslik)
             onceki_op = op_baslik
+
+        # Boyar Madde: alt başlıklara göre sonuç tablosu/tabloları.
+        #  - Tek alt test (örn. Titanyum dioksit): tek tablo, Test="Boyar Madde
+        #    Tanıması", Spesifikasyon=alt test speki.
+        #  - Çoklu alt test: her alt test için AYRI tablo (aynı yapı).
+        if getattr(test, "_boyar", False) and getattr(test, "_grup_baslik", False):
+            altlar = list(getattr(test, "_alt_basliklar", []) or [])
+            if len(altlar) <= 1:
+                sp = altlar[0][1] if altlar else (test.spesifikasyon.spesifikasyon_metni or "")
+                _ekle_sonuc_boyar(doc, proje, "Boyar Madde Tanıması", sp, no)
+                doc.add_paragraph(""); no += 1
+            else:
+                for alt_ad, alt_sp in altlar:
+                    _ekle_sonuc_boyar(doc, proje, alt_ad.lstrip("—-– ").strip(), alt_sp, no)
+                    doc.add_paragraph(""); no += 1
+            continue
+
+        # İlgili Bileşikler / Enantiomerik ALT satırı → o aşamada sonuç tablosu
+        if getattr(test, "_impurite", False) or getattr(test, "_enantiomerik", False):
+            imp = _test_to_impurite(test)
+            test_ad = test.ad.lstrip("—-– ").strip()
+            cap = "Enantiomerik İmpurite" if getattr(test, "_enantiomerik", False) else "İlgili Bileşikler"
+            tohum_ek = 7 if getattr(test, "_enantiomerik", False) else 0
+            _ekle_sonuc_impurite(doc, proje, imp, test_ad, no, tohum_ek=tohum_ek, caption=cap)
+            doc.add_paragraph("")
+            no += 1
+            continue
 
         if test.mikrobiyolojik or tip is TabloTipi.MATRIS:
             _ekle_sonuc_matris(doc, proje, test, no)
@@ -1344,24 +1507,9 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
         doc.add_paragraph("")
         no += 1
 
-    # İlgili Bileşikler (impurite) sonuç tabloları — Test hücresi impurite adı,
-    # tablo başlığı "İlgili Bileşikler".
-    for em in proje.spek_karti.etkin_maddeler:
-        for imp in em.impuriteler:
-            test_ad = imp.ad.lstrip("—-– ").strip()
-            _ekle_sonuc_impurite(doc, proje, imp, test_ad, no, caption="İlgili Bileşikler")
-            doc.add_paragraph("")
-            no += 1
-
-    # Enantiomerik İmpurite sonuç tabloları — İlgili Bileşikler ile AYNI yapı.
-    # Test hücresi alt başlık adı (örn. "Linezolid R-İzomer"), başlık "Enantiomerik İmpurite".
-    for em in proje.spek_karti.etkin_maddeler:
-        for imp in getattr(em, "enantiomerik", None) or []:
-            test_ad = imp.ad.lstrip("—-– ").strip()
-            _ekle_sonuc_impurite(doc, proje, imp, test_ad, no, tohum_ek=7,
-                                 caption="Enantiomerik İmpurite")
-            doc.add_paragraph("")
-            no += 1
+    # NOT: İlgili Bileşikler ve Enantiomerik İmpurite sonuç tabloları artık
+    # dispatcher içinde HER AŞAMADA (karışım/tablet/film) üretiliyor; burada
+    # ayrıca üretilmez (çift basımı önlemek için).
 
     # Yeni eklenen elemanlar (başlık + tablolar + boş paragraflar)
     yeni_elemanlar = [el for el in body if el not in onceki]
@@ -1496,16 +1644,91 @@ def _test_bul(testler, *anahtarlar):
 
 def _doldur_tablo89(doc, proje: ProjeVerisi) -> None:
     """
-    Tablo 8 (Serbest Bırakma) = kullanıcının yüklediği bitmiş ürün spesifikasyonu
-    AYNEN (sıra, alt satırlar, etken grupları korunur).
-    Tablo 9 (Raf Ömrü) = Tablo 8 ile aynı, sadece Miktar Tayini toleransı uygulanır.
+    Tablo 8/9 doldurucu dispatcher. Kullanıcı Word'den tablo yüklediyse ham XML
+    ile BİREBİR kopyalanır (biçim korunur); değilse eski (yeniden inşa) yöntem.
     """
     kart = proje.spek_karti
-    # Orijinal bitmiş ürün listesi (türetme öncesi); yoksa mevcut testler
-    bitmis = getattr(kart, "_bitmis_urun_testleri", None) or kart.testler
-    if not bitmis:
+    ham = getattr(kart, "_tablo8_xml", None)
+    if ham is not None and _tablo89_birebir_kopya(doc, proje, ham):
         return
-    etkenler = kart.etkin_maddeler
+    _doldur_tablo89_eski(doc, proje)
+
+
+def _tablo89_birebir_kopya(doc, proje: ProjeVerisi, ham_tbl) -> bool:
+    """
+    Şablondaki Tablo 8'i (ve varsa Tablo 9'u), kullanıcının yüklediği Word
+    tablosunun ham XML'iyle BİREBİR değiştirir (biçim: kalın/italik/boyut korunur).
+    Tablo 9 = Tablo 8 kopyası + Miktar Tayini satırı raf ömrü toleransıyla düzenli.
+    Başarılıysa True döner.
+    """
+    import copy as _copy
+    from docx.oxml.ns import qn
+    kart = proje.spek_karti
+
+    def _sablon_tablo(no):
+        return _tablo_basliga_gore(doc, no)
+
+    t8 = _sablon_tablo(8)
+    if t8 is None:
+        return False
+
+    # --- Tablo 8: şablon tablosunu ham XML ile değiştir ---
+    yeni8 = _copy.deepcopy(ham_tbl)
+    t8._tbl.addprevious(yeni8)
+    t8._tbl.getparent().remove(t8._tbl)
+
+    # --- Tablo 9: kopya + Miktar Tayini raf ömrü toleransı ---
+    raf_ekle = getattr(kart, "tablo89_ekle", True)
+    t9 = _sablon_tablo(9)
+    if t9 is not None:
+        if raf_ekle:
+            yeni9 = _copy.deepcopy(ham_tbl)
+            # Miktar Tayini hücresini raf ömrü toleransıyla güncelle
+            _tablo9_miktar_guncelle(yeni9, kart)
+            t9._tbl.addprevious(yeni9)
+            t9._tbl.getparent().remove(t9._tbl)
+        else:
+            # Tablo 9 istenmiyorsa şablon taslağını temizle
+            for ri in range(1, len(t9.rows)):
+                for cell in t9.rows[ri].cells:
+                    _hucre_temizle(cell)
+    return True
+
+
+def _tablo9_miktar_guncelle(tbl_el, kart) -> None:
+    """Kopyalanan Tablo 9 XML'inde Miktar Tayini satırının spesifikasyonunu
+    raf ömrü toleransıyla (varsayılan ±%10) yeniden yazar."""
+    from docx.table import Table
+    from docx.oxml.ns import qn
+    # tbl_el bir CT_Tbl; Table sarmalayıcı ile satırlara eriş
+    try:
+        t = Table(tbl_el, None)
+    except Exception:
+        return
+    tol = getattr(kart, "raf_omru_tolerans", None) or "±%10"
+    # Miktar Tayini hedefini bitmiş testlerden bul
+    hedef = None; birim = ""
+    for test in kart.testler:
+        if "miktar tayini" in _norm_basit(test.ad) and test.spesifikasyon.hedef_deger:
+            hedef = test.spesifikasyon.hedef_deger
+            birim = test.spesifikasyon.birim or ""
+            break
+    if hedef is None:
+        return
+    yeni_spek = _miktar_spek_uret(hedef, tol, birim)
+    for row in t.rows:
+        if len(row.cells) < 2:
+            continue
+        sol = _norm_basit(row.cells[0].text)
+        if "miktar tayini" in sol:
+            _hucre_temizle(row.cells[-1])
+            p = row.cells[-1].paragraphs[0]
+            r = p.add_run(yeni_spek)
+            r.font.name = "Times New Roman"
+            break
+
+
+def _doldur_tablo89_eski(doc, proje: ProjeVerisi) -> None:
 
     def _satirlari_uret(raf_omru: bool, tol: str):
         yildiz = "*" if raf_omru else ""
@@ -1817,8 +2040,15 @@ def _doldur_akis_semasi(doc, proje: ProjeVerisi) -> None:
         el = el.getnext()
 
     def _hucre_yaz(cell, satirlar, *, bold=False, ortala=True):
-        va = OxmlElement("w:vAlign"); va.set(qn("w:val"), "center")
-        cell._tc.get_or_add_tcPr().append(va)
+        # Kullanıcı Word'de elle ayarlamak zorunda kalmasın: hücre metni ÜSTE
+        # hizalı (top) ve metin KAYDIRMALI (word-wrap açık, noWrap kaldırılır).
+        tcPr = cell._tc.get_or_add_tcPr()
+        va = OxmlElement("w:vAlign"); va.set(qn("w:val"), "top")
+        tcPr.append(va)
+        # noWrap varsa kaldır (metin kaydırma açık kalsın)
+        nw = tcPr.find(qn("w:noWrap"))
+        if nw is not None:
+            tcPr.remove(nw)
         ilk = True
         for metin in satirlar:
             p = cell.paragraphs[0] if ilk else cell.add_paragraph()
@@ -2145,6 +2375,7 @@ def _doldur_uretim_yontemi_eski(doc, proje):
 
 
 def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
+    proje._formul_notlari_yazildi = False
     belgede_degistir(doc, _placeholder_eslemeleri(proje, rapor))
     _revizyon_no_guncelle(doc, proje.dokuman.revizyon_no)
     _doldur_formul(doc, proje)

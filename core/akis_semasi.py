@@ -52,10 +52,12 @@ def _hammadde_kutulari(proje) -> list[dict]:
 
 
 def _bilinen_hammaddeler(proje) -> list[str]:
-    """proje.hammaddeler listesindeki hammadde adlarını döndürür (uzundan kısaya)."""
+    """proje.hammaddeler listesindeki hammadde adlarını döndürür (uzundan kısaya).
+    Akış şemasında hammadde adları yıldızsız gösterilir (örn. 'Kaplama Materyali*'
+    → 'Kaplama Materyali')."""
     out = []
     for h in (getattr(proje, "hammaddeler", None) or []):
-        ad = (getattr(h, "ad", "") or "").strip()
+        ad = (getattr(h, "ad", "") or "").strip().rstrip("*").strip()
         if ad and ad.lower() not in ("u.y.", "uy", "ara toplam", "toplam"):
             out.append(ad)
     # uzun isimler önce eşleşsin (kısmi eşleşmeleri önlemek için)
@@ -111,6 +113,14 @@ def _parcada_madde_bul(parca: str, bilinen: list[str]) -> list[str]:
             if tam_ad not in gorulen:
                 gorulen.add(tam_ad)
                 bulunan.append((konum[0], tam_ad))
+        # "su" / "sıcak su" → Deiyonize Su algıla: bilinen listede bir "... Su"
+        # (deiyonize su) varsa ve parçada geçen 'su' henüz eşleşmediyse ekle.
+        deiyonize = next((a for a in bilinen if _re.search(r"\bsu\b", a, _re.IGNORECASE)), None)
+        if deiyonize and deiyonize not in gorulen:
+            msu = _re.search(r"(sıcak\s+su|deiyonize\s+su|\bsu\b)", parca, _re.IGNORECASE)
+            if msu:
+                gorulen.add(deiyonize)
+                bulunan.append((msu.start(), deiyonize))
         bulunan.sort(key=lambda x: x[0])
         return [ad for _, ad in bulunan]
     return _maddeleri_ayikla(parca)
@@ -139,6 +149,12 @@ def _madde_konum(ad: str, parca: str):
         metin = " ".join(p.group() for p in pencere)
         oran = SequenceMatcher(None, ad.lower(), metin.lower()).ratio()
         if oran >= 0.85:  # %85+ benzerlik → aynı madde say
+            # ANCAK: ad'da ayırt edici sayı(lar) varsa (örn. Avicel pH 101/102),
+            # eşleşen pencerede AYNI sayılar bulunmalı; yoksa yanlış pozitiftir.
+            ad_sayilar = _re.findall(r"\d+", ad)
+            metin_sayilar = _re.findall(r"\d+", metin)
+            if ad_sayilar and ad_sayilar != metin_sayilar:
+                continue
             return (pencere[0].start(), pencere[-1].end())
     return None
 

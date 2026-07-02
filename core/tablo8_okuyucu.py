@@ -274,8 +274,12 @@ def tablo8_coz(yol: str) -> dict:
                 hedef.spesifikasyon.sabit_sonuc = sag
             continue
 
+    # Ham tablo XML'ini de sakla (Tablo 8/9 birebir kopya için)
+    import copy as _copy
+    ham_xml = _copy.deepcopy(t._tbl)
     return {"bulundu": True, "testler": testler,
-            "etkin_maddeler": list(etkenler.values())}
+            "etkin_maddeler": list(etkenler.values()),
+            "tablo8_xml": ham_xml}
 
 
 def _ad_temizle(ad: str) -> str:

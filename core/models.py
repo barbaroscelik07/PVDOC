@@ -217,6 +217,14 @@ class Hammadde:
     seri_miktar: Optional[float] = None    # kg / {adet}
     katman: int = 0                   # çift katman tablet için: 0=yok, 1=Katman I, 2=Katman II
     ara_toplam: bool = False          # "Katman I Ağırlık" gibi toplam satırı mı
+    # --- Birim formül potens sistemi ---
+    etken: bool = False               # bu satır bir etkin madde mi (potens ayarı gerektirir)
+    potens: Optional[float] = None    # kullanıcı girer (örn. 99.17); tartım = seri×100/potens
+    potens_ayarlayici: bool = False   # potens ayarlayıcı hammadde mi (fazlalık buradan düşülür)
+    ust_numara: Optional[int] = None  # seri boyu yanındaki üst-karakter numarası (¹,²…)
+    # Kaplama materyali yıldız sayısı (0=yok); % bileşenler kaplama_bilesimi'nde
+    kaplama_yildiz: int = 0
+    kaplama_bilesimi: str = ""        # "Polivinil alkol (E1203) (%44,00), ..." 
 
 
 @dataclass
@@ -311,7 +319,7 @@ class SpekKarti:
     # Miktar Tayini toleransı bu tablolarda farklıdır; aşağıdaki toleranslar kullanılır.
     tablo89_ekle: bool = False
     serbest_birakma_tolerans: str = "±%5"     # Tablo 8 miktar tayini toleransı
-    raf_omru_tolerans: str = "±%7.5"          # Tablo 9 miktar tayini toleransı
+    raf_omru_tolerans: str = "±%10"          # Tablo 9 miktar tayini toleransı
 
     # Açıksa: testler[] BİTMİŞ ÜRÜN listesi kabul edilir; çıktıda kural motoruyla
     # tüm aşamalara dağıtılır (Tablo 6/7/9 otomatik türetilir).

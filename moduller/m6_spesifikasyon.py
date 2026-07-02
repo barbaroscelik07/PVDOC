@@ -320,6 +320,8 @@ class SpekModulu(QWidget):
             return
         self.kart.testler = r["testler"]
         self.kart.etkin_maddeler = r["etkin_maddeler"]
+        # Tablo 8/9 birebir kopya için ham XML'i sakla
+        self.kart._tablo8_xml = r.get("tablo8_xml")
         self.kart.otomatik_turet = True
         self.kart.tablo89_ekle = True   # Word yüklenince Tablo 8/9 otomatik dolar
         self.chk_turet.setChecked(True)

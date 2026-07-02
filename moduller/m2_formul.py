@@ -121,6 +121,75 @@ class FormulModulu(QWidget):
             eklenen += 1
         if eklenen:
             self._verilerden_doldur()
+            self._birim_formul_sorulari()
+
+    def _birim_formul_sorulari(self) -> None:
+        """
+        Word'den birim formül yapıştırıldıktan sonra otomatik sorular:
+          1) Her etkin madde için potens (tartım = seri×100/potens; not eklenir).
+          2) Potens ayarlayıcı hammadde (fazlalık buradan düşülür; not eklenir).
+          3) 'Kaplama Materyali*' (yıldızlı) için % bileşen listesi (tablo altı not).
+        """
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+        hammaddeler = self.proje.hammaddeler
+
+        # --- Etkin maddeleri tespit et: fonksiyon 'etkin/aktif' içeren satırlar ---
+        etkenler = [h for h in hammaddeler
+                    if "etkin" in (h.fonksiyon or "").lower()
+                    or "aktif" in (h.fonksiyon or "").lower()]
+        if not etkenler:
+            # Fonksiyon boşsa kullanıcıya sor: hangi satırlar etken?
+            adlar = [h.ad for h in hammaddeler if h.ad and not h.ara_toplam]
+            if adlar:
+                sec, ok = QInputDialog.getItem(
+                    self, "Etkin Madde Seçimi",
+                    "Etkin madde hangisi? (potens ayarı için)", adlar, 0, False)
+                if ok and sec:
+                    etkenler = [h for h in hammaddeler if h.ad == sec]
+
+        # 1) Potens sor + üst-numara ata (1, 2, ...)
+        numara = 1
+        for h in etkenler:
+            h.etken = True
+            deger, ok = QInputDialog.getDouble(
+                self, "Potens", f"{h.ad} için potens (%) değerini girin:",
+                99.00, 1.0, 100.0, 2)
+            if ok:
+                h.potens = deger
+                h.ust_numara = numara
+                numara += 1
+
+        # 2) Potens ayarlayıcı hammadde sor
+        aday = [h.ad for h in hammaddeler if h.ad and not h.ara_toplam and not h.etken]
+        if aday and etkenler:
+            sec, ok = QInputDialog.getItem(
+                self, "Potens Ayarlayıcı",
+                "Potens ayarlayıcı hammadde hangisi?", aday, 0, False)
+            if ok and sec:
+                for h in hammaddeler:
+                    if h.ad == sec:
+                        h.potens_ayarlayici = True
+                        h.ust_numara = numara
+                        numara += 1
+
+        # 3) Kaplama Materyali* (yıldızlı) için % bileşen listesi sor
+        for h in hammaddeler:
+            yildiz = (h.ad or "").count("*")
+            if yildiz and "kaplama materyali" in (h.ad or "").lower():
+                h.kaplama_yildiz = yildiz
+                metin, ok = QInputDialog.getMultiLineText(
+                    self, "Kaplama Materyali Bileşimi",
+                    f"{h.ad} % bileşen listesini girin\n"
+                    "(örn: Polivinil alkol (E1203) (%44,00), Talk (E553b) (%20,00), ...):",
+                    "")
+                if ok and metin.strip():
+                    h.kaplama_bilesimi = metin.strip()
+
+        self._verilerden_doldur()
+        QMessageBox.information(
+            self, "Birim Formül Hazır",
+            "Potens, potens ayarlayıcı ve kaplama bilgileri kaydedildi.\n"
+            "Çıktıda tablo altına ilgili notlar otomatik yazılacak.")
 
     def _toplam_ekle(self) -> None:
         self.proje.hammaddeler.append(Hammadde(ad="Katman Ağırlık", ara_toplam=True))

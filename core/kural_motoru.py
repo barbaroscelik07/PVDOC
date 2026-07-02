@@ -325,7 +325,24 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
     op_sira = {"Karıştırma": 2, "Tablet Baskı": 3, "Film Kaplama": 4,
                "Dolum": 3, "Blisterleme": 5}
     cikti.sort(key=lambda t: op_sira.get(t.operasyon, 99))
-    return cikti
+
+    # Her aşamada Mikrobiyolojik Kontrol HER ZAMAN son sırada olmalı (Nem gibi
+    # sonradan eklenen testler mikrobiyolojiden önce gelsin). Aşama içi diğer
+    # sıra korunarak mikrobiyolojik testler aşama sonuna taşınır.
+    def _mikro_mu(t):
+        return getattr(t, "mikrobiyolojik", False) or "mikrobiyolojik" in _norm(t.ad)
+    yeniden = []
+    i = 0
+    n = len(cikti)
+    while i < n:
+        op = cikti[i].operasyon
+        grup = []
+        while i < n and cikti[i].operasyon == op:
+            grup.append(cikti[i]); i += 1
+        mikrolar = [t for t in grup if _mikro_mu(t)]
+        digerleri = [t for t in grup if not _mikro_mu(t)]
+        yeniden.extend(digerleri + mikrolar)
+    return yeniden
 
 
 def testleri_turet(bitmis_testler, operasyonlar, etkin_maddeler):

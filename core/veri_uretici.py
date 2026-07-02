@@ -531,6 +531,11 @@ def _on_numune(spek: Spesifikasyon) -> dict:
         fark = hedef_ort - mevcut
         olcumler = [min(DEGER_UST, max(DEGER_ALT, round(v + fark, 2))) for v in olcumler]
         ort = ortalama(olcumler)
+        # KULLANICI KURALI: karışım tekdüzeliği ortalaması ASLA 100 altında olmaz.
+        if ort < 100.0:
+            fark2 = 100.05 - ort
+            olcumler = [min(DEGER_UST, round(v + fark2, 2)) for v in olcumler]
+            ort = ortalama(olcumler)
         seriler.append({
             "olcumler": [_bicimle(o) for o in olcumler],
             "ortalama": _bicimle(ort),

@@ -256,7 +256,14 @@ def _doldur_risk(doc, proje: ProjeVerisi) -> None:
 
 def _doldur_proses_param(doc, proje: ProjeVerisi) -> None:
     t = _tablo_basliga_gore(doc, 4)  # Tablo 4
-    if t is None or not proje.proses_parametreleri:
+    if t is None:
+        return
+    # Kullanıcı öngörülen proses parametrelerini doldurmadıysa, şablondaki TASLAK
+    # satırları (örn. 'Operasyon 2: Aşama 8 | Karıştırma Süresi | 10 dk') temizle.
+    if not proje.proses_parametreleri:
+        for ri in range(1, len(t.rows)):  # başlık satırı hariç
+            for cell in t.rows[ri].cells:
+                _hucre_temizle(cell)
         return
     idxler = _veri_satirlarini_ayarla(t, 1, len(proje.proses_parametreleri))
     for ri, pp in zip(idxler, proje.proses_parametreleri):
@@ -265,6 +272,13 @@ def _doldur_proses_param(doc, proje: ProjeVerisi) -> None:
         hucre_yaz(cells[1], pp.parametre)
         if len(cells) > 2:
             hucre_yaz(cells[2], pp.deger)
+
+
+def _hucre_temizle(cell):
+    """Hücre içeriğini tamamen boşaltır (taslak metni siler)."""
+    for p in cell.paragraphs:
+        for r in p.runs:
+            r.text = ""
 
 
 def _doldur_ekipman(doc, proje: ProjeVerisi) -> None:
@@ -296,42 +310,73 @@ def _doldur_numune(doc, proje: ProjeVerisi) -> None:
 def _doldur_spek(doc, proje: ProjeVerisi) -> None:
     """
     Tablo 6 — spesifikasyon. Türetilmiş test listesi tek geçişte yazılır.
-    Her satırda Op No + Operasyon dolu (alt satırlar dahil). İlgili Bileşikler
-    grup başlığı + impurite satırları test listesinde sırayla gelir.
+    Alt-başlıklı testlerde (İlgili Bileşikler, Enantiomerik İmpurite, Mikrobiyolojik,
+    Boyar Madde, Ağırlık Tekdüzeliği) grup başlığı satırında Op No + Operasyon dolu,
+    ALT satırlarda BOŞ (dikey birleşik grup). Bulk + Tap Dansite tek satırda birleşir.
     """
     t = _tablo_basliga_gore(doc, 6)
     kart = proje.spek_karti
     if t is None or not kart.testler:
         return
 
-    # Satır planı: (op_no, op, ad, spek, alt_satirlar)
-    plan = []  # her eleman: (opno, op, ad, spek)
+    # Satır planı: (op_no, op, ad, spek)  — alt satırlarda op_no/op "" bırakılır
+    plan = []
+    _bulk_bekliyor = None  # Bulk Dansite satırını Tap ile birleştirmek için beklet
     for test in kart.testler:
         opno = str(test.operasyon_no or "")
         op = test.operasyon
         yildiz = "*" if test.yildizli else ""
         ad = test.ad + yildiz
-        # ekstra alt satırlar (mikrobiyolojik 3 alt, ağırlık tekdüzeliği 2 alt)
+
+        # --- Bulk + Tap Dansite → tek satır "Bulk ve Tap Dansite" ---
+        _adl = _kucuk(test.ad)
+        if "bulk dansite" in _adl:
+            _bulk_bekliyor = (opno, op, test)
+            continue
+        if "tap dansite" in _adl:
+            if _bulk_bekliyor is not None:
+                bopno, bop, btest = _bulk_bekliyor
+                spek = btest.spesifikasyon.metni_olustur() or "Bilgi amaçlıdır."
+                plan.append((bopno, bop, "Bulk ve Tap Dansite" + yildiz, spek))
+                _bulk_bekliyor = None
+            else:
+                plan.append((opno, op, "Bulk ve Tap Dansite" + yildiz,
+                             test.spesifikasyon.metni_olustur() or "Bilgi amaçlıdır."))
+            continue
+
+        # ekstra alt satırlar (mikrobiyolojik, ağırlık tekdüzeliği, boyar)
         ekstra = list(test.alt_satirlar)
         if test.aciklama_etiketi:
             ekstra.append((test.aciklama_etiketi, test.aciklama_spek))
         if test.aciklama2_etiketi:
             ekstra.append((test.aciklama2_etiketi, test.aciklama2_spek))
         if ekstra:
-            # başlık satırı (spek boş), sonra alt satırlar
+            # başlık satırı (spek boş) op dolu; alt satırlarda op BOŞ
             plan.append((opno, op, ad, ""))
             for et, sp in ekstra:
-                plan.append((opno, op, et, sp))
+                plan.append(("", "", et, sp))
+        elif getattr(test, "_grup_baslik", False):
+            # İlgili Bileşikler / Enantiomerik / Boyar başlığı: op dolu, spek boş
+            plan.append((opno, op, ad, ""))
+        elif getattr(test, "_impurite", False) or getattr(test, "_boyar_alt", False):
+            # impurite/enantiomerik/boyar ALT satırı: op BOŞ (birleşik grup)
+            plan.append(("", "", ad, test.spesifikasyon.spesifikasyon_metni
+                         or test.spesifikasyon.metni_olustur() or ""))
         else:
-            # grup başlığı testinin spek'i boş olmalı (İlgili Bileşikler başlığı)
-            if getattr(test, "_grup_baslik", False):
-                plan.append((opno, op, ad, ""))
-            elif getattr(test, "_impurite", False):
-                plan.append((opno, op, ad, test.spesifikasyon.spesifikasyon_metni or ""))
-            else:
-                plan.append((opno, op, ad, test.spesifikasyon.metni_olustur()))
+            plan.append((opno, op, ad, test.spesifikasyon.metni_olustur()))
 
     idxler = _veri_satirlarini_ayarla(t, 1, len(plan))
+    # Şablonun örnek satırlarında Op No/Operasyon hücrelerinde dikey birleştirme
+    # (vMerge) olabilir; bu, boş yazılan alt-satır hücrelerinin üstteki değeri
+    # devralmasına ve sütun kaymasına yol açar. Tüm tablodaki vMerge'leri kaldır.
+    from docx.oxml.ns import qn as _qn
+    for row in t.rows:
+        for tc in row._tr.findall(_qn("w:tc")):
+            tcPr = tc.find(_qn("w:tcPr"))
+            if tcPr is not None:
+                vm = tcPr.find(_qn("w:vMerge"))
+                if vm is not None:
+                    tcPr.remove(vm)
     for ri, (opno, op, ad, spek) in zip(idxler, plan):
         cells = t.rows[ri].cells
         hucre_yaz(cells[0], opno)
@@ -941,17 +986,18 @@ def _ekle_sonuc_agirlik_film(doc, proje, test, no):
             _yaz_bos(t.rows[23+k].cells[c+1], _seri_dict(seriler, c).get(key, ""), True)
 
 
-def _ekle_sonuc_impurite(doc, proje, imp, baslik, no, tohum_ek=0):
+def _ekle_sonuc_impurite(doc, proje, imp, baslik, no, tohum_ek=0, caption=None):
     """
-    Bir impurite için sonuç tablosu (resim — Tablo 25-28):
-      Test | <başlık>  (örn. 'Etkin madde 1 imp. a')
+    Bir impurite için sonuç tablosu:
+      Test | <baslik>  (örn. 'Linezolid impurite C' veya 'Linezolid R-İzomer')
       Spesifikasyon | <limit metni>
       Numuneler/Analiz | Seri No
       Numune 1 / Numune 2 / Sonuç
+    caption: tablo başlığı ('Tablo.X <caption> Sonuçları'). Verilmezse baslik kullanılır.
     Maksimum değere uyar; T.E. ise hepsi 'T.E.' + alt not.
     """
     import random as _r
-    _sonuc_basligi(doc, no, baslik)
+    _sonuc_basligi(doc, no, caption if caption is not None else baslik)
     t = _yeni_tablo(doc, 7, SERI_SAYISI + 1)
     _yaz_bos(t.rows[0].cells[0], "Test", True)
     t.rows[0].cells[1].merge(t.rows[0].cells[SERI_SAYISI])
@@ -1249,10 +1295,20 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
         tip = test.tablo_tipi
         ad_l = _kucuk(test.ad)
 
-        # "İlgili Bileşikler" BAŞLIK testi (alt impuriteleri ayrı tablolarda
-        # üretilir) → ayrı bir özet tablo BASILMAZ; şablonda yoktur.
+        # İlgili Bileşikler ve Enantiomerik İmpurite sonuç tabloları AYRICA
+        # em.impuriteler / em.enantiomerik döngülerinde üretilir. Buradaki grup
+        # başlıklarını ve alt satırlarını (— ile başlayan) ATLA — çift basımı önle.
+        if getattr(test, "_impurite", False) or getattr(test, "_enantiomerik", False):
+            continue
+        if getattr(test, "_grup_baslik", False) and \
+           ("ilgili" in ad_l or "enantiomerik" in ad_l):
+            continue
         if ("ilgili bileşik" in ad_l or "ilgili bilesik" in ad_l) and \
            tip in (TabloTipi.TEK_SONUC, TabloTipi.IKI_NUMUNE):
+            continue
+        # Boyar Madde alt satırı (Titanyum dioksit) tek başına sonuç tablosu OLMAZ;
+        # boyar madde tek tablo olarak başlık testinde render edilir.
+        if getattr(test, "_boyar_alt", False):
             continue
 
         # Operasyon başlığı: aşama değiştiğinde okunabilir başlık yaz
@@ -1288,12 +1344,22 @@ def _doldur_sonuclar(doc, proje: ProjeVerisi) -> None:
         doc.add_paragraph("")
         no += 1
 
-    # İlgili Bileşikler (impurite) sonuç tabloları — her etkin maddenin her impuritesi
+    # İlgili Bileşikler (impurite) sonuç tabloları — Test hücresi impurite adı,
+    # tablo başlığı "İlgili Bileşikler".
     for em in proje.spek_karti.etkin_maddeler:
         for imp in em.impuriteler:
-            ad = imp.ad if imp.ad.startswith("—") or imp.ad.startswith("-") else imp.ad
-            baslik = f"{em.ad} {ad}".replace("—", "").replace("- ", "").strip()
-            _ekle_sonuc_impurite(doc, proje, imp, baslik, no)
+            test_ad = imp.ad.lstrip("—-– ").strip()
+            _ekle_sonuc_impurite(doc, proje, imp, test_ad, no, caption="İlgili Bileşikler")
+            doc.add_paragraph("")
+            no += 1
+
+    # Enantiomerik İmpurite sonuç tabloları — İlgili Bileşikler ile AYNI yapı.
+    # Test hücresi alt başlık adı (örn. "Linezolid R-İzomer"), başlık "Enantiomerik İmpurite".
+    for em in proje.spek_karti.etkin_maddeler:
+        for imp in getattr(em, "enantiomerik", None) or []:
+            test_ad = imp.ad.lstrip("—-– ").strip()
+            _ekle_sonuc_impurite(doc, proje, imp, test_ad, no, tohum_ek=7,
+                                 caption="Enantiomerik İmpurite")
             doc.add_paragraph("")
             no += 1
 
@@ -1380,6 +1446,20 @@ def _placeholder_eslemeleri(proje: ProjeVerisi, rapor: bool) -> dict[str, str]:
             es[f"yyy-P0{i+1}"] = sno
     if d.firma_ismi:
         es["{Firma ismi}"] = d.firma_ismi
+
+    # --- Kapsam / Sorumluluk / Kaydedilme metinleri (PVP vs PVR tense farkı) ---
+    # Şablon PVP metnini (gelecek zaman) içerir; PVR'de geçmiş zamana çevrilir.
+    # Sorumluluk metni her ikisinde de "dağılımları aşağıdaki gibidir." olur.
+    es["sorumluluk dağılımları sayfa 5’teki gibidir."] = \
+        "sorumluluk dağılımları aşağıdaki gibidir."
+    es["sorumluluk dağılımları sayfa 5'teki gibidir."] = \
+        "sorumluluk dağılımları aşağıdaki gibidir."
+    if rapor:  # PVR → geçmiş zaman
+        es["validasyon çalışması ardışık 3 seriye uygulanacaktır."] = \
+            "validasyon çalışması ardışık 3 seriye uygulanmıştır."
+        es["Raporunda verilen tablolara kaydedilecektir."] = \
+            "Raporunda verilen tablolara kaydedilmiştir."
+        es["tablolara kaydedilecektir."] = "tablolara kaydedilmiştir."
     return es
 
 
@@ -1430,11 +1510,46 @@ def _doldur_tablo89(doc, proje: ProjeVerisi) -> None:
     def _satirlari_uret(raf_omru: bool, tol: str):
         yildiz = "*" if raf_omru else ""
         satirlar = []  # (sol, sag)
+        imp_eklendi = False
+        enan_eklendi = False
+
+        def _ilgili_bilesikler_ekle():
+            """İlgili Bileşikler başlığı + alt satırlar (etkenden). Tek etkende
+            'e Ait' ara başlığı KULLANILMAZ (girdi biçimiyle birebir)."""
+            if not any(em.impuriteler for em in etkenler):
+                return
+            satirlar.append(("İlgili Bileşikler", ""))
+            cok_etken = sum(1 for em in etkenler if em.impuriteler) > 1
+            for em in etkenler:
+                if not em.impuriteler:
+                    continue
+                if cok_etken:
+                    satirlar.append((f"{em.ad}'e Ait", ""))
+                for imp in em.impuriteler:
+                    a = imp.ad if imp.ad.startswith(("—", "-", "–")) else f"— {imp.ad}"
+                    satirlar.append((a, imp.limit_metni or ""))
+
+        def _enantiomerik_ekle():
+            """Enantiomerik İmpurite başlığı + alt satırlar (etkenden)."""
+            if not any(getattr(em, "enantiomerik", None) for em in etkenler):
+                return
+            satirlar.append(("Enantiomerik İmpurite", ""))
+            for em in etkenler:
+                for imp in (getattr(em, "enantiomerik", None) or []):
+                    a = imp.ad if imp.ad.startswith(("—", "-", "–")) else f"— {imp.ad}"
+                    satirlar.append((a, imp.limit_metni or ""))
+
         for test in bitmis:
             ad = test.ad
+            n = _norm_basit(ad)
             spek = test.spesifikasyon.spesifikasyon_metni or test.spesifikasyon.metni_olustur()
-            # Mikrobiyolojik: başlık + alt satırlar
+            # Mikrobiyolojik: başlık + alt satırlar. Ondan ÖNCE İlgili Bileşikler
+            # ve Enantiomerik henüz eklenmediyse ekle (girdi sırası: ...Enan, Mikro).
             if test.mikrobiyolojik:
+                if not imp_eklendi:
+                    _ilgili_bilesikler_ekle(); imp_eklendi = True
+                if not enan_eklendi:
+                    _enantiomerik_ekle(); enan_eklendi = True
                 satirlar.append(("Mikrobiyolojik Kontrol", ""))
                 for et, sp in (test.alt_satirlar or []):
                     satirlar.append((et, sp))
@@ -1446,28 +1561,46 @@ def _doldur_tablo89(doc, proje: ProjeVerisi) -> None:
                 if test.aciklama2_etiketi:
                     satirlar.append((test.aciklama2_etiketi, test.aciklama2_spek))
                 continue
+            # Boyar Madde: başlık (boş) + alt satırlar (Titanyum dioksit vb.)
+            if "boyar madde" in n and (test.alt_satirlar or not spek):
+                satirlar.append((ad, ""))
+                for et, sp in (test.alt_satirlar or []):
+                    a = et if et.startswith(("—", "-", "–")) else f"-{et}"
+                    satirlar.append((a, sp))
+                continue
+            # İlgili Bileşikler bitmiş listede AYRI test olarak varsa: burada ekle
+            if "ilgili bilesik" in n:
+                if not imp_eklendi:
+                    _ilgili_bilesikler_ekle(); imp_eklendi = True
+                continue
+            if "enantiomerik" in n:
+                if not enan_eklendi:
+                    _enantiomerik_ekle(); enan_eklendi = True
+                continue
             # Miktar Tayini: raf ömründe tolerans uygula
-            if raf_omru and "miktar tayini" in _norm_basit(ad) and test.spesifikasyon.hedef_deger:
+            if raf_omru and "miktar tayini" in n and test.spesifikasyon.hedef_deger:
                 spek = _miktar_spek_uret(test.spesifikasyon.hedef_deger, tol, test.spesifikasyon.birim)
             satirlar.append((ad, spek))
-        # İlgili Bileşikler (etken grupları, eğer bitmiş listede ayrı test olarak yoksa)
-        if etkenler and any(em.impuriteler for em in etkenler):
-            zaten_var = any("ilgili" in _norm_basit(t.ad) for t in bitmis)
-            if not zaten_var:
-                satirlar.append(("İlgili Bileşikler", ""))
-                for em in etkenler:
-                    if not em.impuriteler:
-                        continue
-                    satirlar.append((f"{em.ad}'e Ait", ""))
-                    for imp in em.impuriteler:
-                        a = imp.ad if imp.ad.startswith(("—", "-")) else f"—{imp.ad}"
-                        satirlar.append((a, imp.limit_metni or ""))
+
+        # Döngü mikrobiyolojik olmadan bittiyse İlgili/Enantiomerik'i sona ekle
+        if not imp_eklendi:
+            _ilgili_bilesikler_ekle()
+        if not enan_eklendi:
+            _enantiomerik_ekle()
         return satirlar
 
     raf_omru_ekle = getattr(kart, "tablo89_ekle", True)
     hedefler = [(8, False, kart.serbest_birakma_tolerans)]
     if raf_omru_ekle:
         hedefler.append((9, True, kart.raf_omru_tolerans))
+    else:
+        # Tablo 9 üretilmeyecekse şablondaki TASLAK satırları temizle
+        # (boş alanda taslak metni bırakma kuralı).
+        t9 = _tablo_basliga_gore(doc, 9)
+        if t9 is not None:
+            for ri in range(1, len(t9.rows)):
+                for cell in t9.rows[ri].cells:
+                    _hucre_temizle(cell)
     for tablo_no, raf, tol in hedefler:
         t = _tablo_basliga_gore(doc, tablo_no)
         if t is None:

@@ -102,8 +102,20 @@ def hucre_yaz(cell, metin: str, bold: bool | None = None) -> None:
 
 
 def satiri_bosalt(row: _Row) -> None:
-    """Bir satırın tüm hücrelerini boşaltır (klon sonrası temiz başlangıç)."""
+    """
+    Bir satırın tüm hücrelerini boşaltır (klon sonrası temiz başlangıç).
+    Ayrıca dikey/yatay hücre birleştirmelerini (vMerge/gridSpan) KALDIRIR;
+    aksi halde klonlanan satır üstteki hücrenin değerini görsel olarak devralır
+    ve Operasyon No/Operasyon sütunları kayar.
+    """
+    from docx.oxml.ns import qn
     for cell in row.cells:
         for p in cell.paragraphs:
             for r in p.runs:
                 r.text = ""
+        tcPr = cell._tc.find(qn("w:tcPr"))
+        if tcPr is not None:
+            for etiket in ("w:vMerge", "w:gridSpan"):
+                el = tcPr.find(qn(etiket))
+                if el is not None:
+                    tcPr.remove(el)

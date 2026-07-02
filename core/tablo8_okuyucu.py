@@ -101,6 +101,7 @@ def tablo8_coz(yol: str) -> dict:
     etkenler: dict[str, EtkinMadde] = {}
     aktif_etken_imp = None     # İlgili Bileşikler altında aktif etken
     ilgili_bolumde = False
+    enantiomerik_bolumde = False
     mikro_test = None
     agirlik_test = None
     aktif_etken_adi = None     # "Etkin madde 1" başlığı altındayız
@@ -129,6 +130,7 @@ def tablo8_coz(yol: str) -> dict:
         # --- Bölüm başlıkları ---
         if n == "ilgili bilesikler" or n.startswith("ilgili bilesik"):
             ilgili_bolumde = True
+            enantiomerik_bolumde = False
             # Grup başlığı ("'e Ait") yoksa impuriteler son tanınan etkene gider.
             if aktif_etken_adi:
                 aktif_etken_imp = _etken(aktif_etken_adi)
@@ -137,6 +139,29 @@ def tablo8_coz(yol: str) -> dict:
             else:
                 aktif_etken_imp = None
             continue
+
+        # --- Enantiomerik İmpurite (İlgili Bileşikler ile aynı yapı) ---
+        if "enantiomerik" in n:
+            enantiomerik_bolumde = True
+            ilgili_bolumde = False
+            if aktif_etken_adi:
+                aktif_etken_imp = _etken(aktif_etken_adi)
+            elif etkenler:
+                aktif_etken_imp = list(etkenler.values())[-1]
+            else:
+                aktif_etken_imp = None
+            continue
+
+        if enantiomerik_bolumde:
+            if sol.startswith(("—", "-", "–")):
+                if aktif_etken_imp is not None:
+                    ad = sol.lstrip("—-– ").strip()
+                    te = "t.e" in _norm(sag)
+                    aktif_etken_imp.enantiomerik.append(Impurite(
+                        ad=ad, limit_metni=sag, maksimum_deger=_sayi(sag), te=te))
+                    continue
+            else:
+                enantiomerik_bolumde = False
 
         if ilgili_bolumde:
             # "Etkin madde 1'e Ait" → grup başlığı
@@ -232,16 +257,21 @@ def tablo8_coz(yol: str) -> dict:
             tip = _tip_tahmin(n)
             yeni_test = _test_yap(ad_temiz, sag, tip)
             testler.append(yeni_test)
-            # Boyar Madde gibi başlık(boş)+alt satırlı testler: alt satırın
-            # değerini bu testin spesifikasyonu yap
+            # Boyar Madde gibi başlık(boş)+alt satırlı testler: alt satırları
+            # alt_satirlar listesinde biriktir (İlgili Bileşikler benzeri yapı)
             if not sag and "boyar madde" in n:
+                yeni_test.alt_satirlar = []
                 _bekleyen_boyar.append(yeni_test)
             continue
         # Boyar Madde alt satırı (-Titanyum dioksit ...)
         if sol.startswith(("—", "-", "–")) and _bekleyen_boyar and not aktif_etken_adi:
-            hedef = _bekleyen_boyar.pop()
-            hedef.spesifikasyon.spesifikasyon_metni = sag
-            hedef.spesifikasyon.sabit_sonuc = sag
+            hedef = _bekleyen_boyar[-1]
+            alt_ad = sol.lstrip("—-– ").strip()
+            hedef.alt_satirlar.append((alt_ad, sag))
+            # İlk alt satırı spesifikasyon metni olarak da tut (geri uyumluluk)
+            if not hedef.spesifikasyon.spesifikasyon_metni:
+                hedef.spesifikasyon.spesifikasyon_metni = sag
+                hedef.spesifikasyon.sabit_sonuc = sag
             continue
 
     return {"bulundu": True, "testler": testler,

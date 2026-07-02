@@ -831,31 +831,36 @@ def _miktar_asama_iliskisi(testler: list[Test]) -> None:
             continue
         # Her seri için bir "karışım taban değeri" seç (hedef..hedef×1.02),
         # tablet ve film bundan küçük ofsetlerle düşürülür.
-        seri_taban = [random.uniform(hedef, hedef * 1.02) for _ in range(SERI_SAYISI)]
+        # Taban değerleri hedefin ~%1-3 üstünde seçilir; aşama düşüşü ve rastgele
+        # sapmadan sonra bile ORTALAMA hedefin altına inmez (kullanıcı kuralı).
+        seri_taban = [random.uniform(hedef * 1.01, hedef * 1.03) for _ in range(SERI_SAYISI)]
         for op, test in asama_map.items():
             sira = ASAMA_SIRA.get(op, 1)
             # aşama başına küçük düşüş: karışım 0, tablet ~%0.3, film ~%0.6
             dusus = [0.0, 0.003, 0.006][min(sira, 2)]
             test.sonuc_verisi = _miktar_tayini_iliskili(
-                test, [v * (1.0 - dusus) for v in seri_taban])
+                test, [v * (1.0 - dusus) for v in seri_taban], hedef)
 
 
-def _miktar_tayini_iliskili(test: Test, seri_hedef: list[float]) -> dict:
+def _miktar_tayini_iliskili(test: Test, seri_hedef: list[float], hedef: float = None) -> dict:
     """
     Miktar Tayini sonucunu, verilen seri-hedef değerleri etrafında üretir.
+    hedef verilirse ortalama ve bireysel değerler hedefin altına inmez.
     Yapı test tipine göre:
       - ON_NUMUNE (Karışım Tekdüzeliği): 10 ölçüm + Ortalama, ortalama ≈ seri_hedef.
       - IKI_NUMUNE / diğer (Tablet/Film Miktar Tayini): Baş/Orta/Son × Numune-1/2.
     """
     spek = test.spesifikasyon
     ond = spek.ondalik or 2
+    taban = hedef if hedef is not None else 0.0
     if test.tablo_tipi is TabloTipi.ON_NUMUNE:
         seriler = []
         for hed in seri_hedef:
-            olcumler = [round(hed + random.uniform(-1.2, 1.2), ond) for _ in range(10)]
+            hed = max(hed, taban)
+            olcumler = [round(max(taban, hed + random.uniform(-1.2, 1.2)), ond) for _ in range(10)]
             mevcut = ortalama(olcumler)
             fark = hed - mevcut
-            olcumler = [round(v + fark, ond) for v in olcumler]
+            olcumler = [round(max(taban, v + fark), ond) for v in olcumler]
             seriler.append({
                 "olcumler": [_bicimle(o) for o in olcumler],
                 "ortalama": _bicimle(ortalama(olcumler)),
@@ -864,11 +869,12 @@ def _miktar_tayini_iliskili(test: Test, seri_hedef: list[float]) -> dict:
     # Baş/Orta/Son × Numune-1/2/Sonuç + seri ortalaması
     seriler = []
     for hed in seri_hedef:
+        hed = max(hed, taban)
         noktalar = {}
         nokta_sonuc = []
         for nokta in NOKTA_ADLARI:
-            n1 = round(hed + random.uniform(-1.0, 1.0), ond)
-            n2 = round(hed + random.uniform(-1.0, 1.0), ond)
+            n1 = round(max(taban, hed + random.uniform(-1.0, 1.0)), ond)
+            n2 = round(max(taban, hed + random.uniform(-1.0, 1.0)), ond)
             s = round((n1 + n2) / 2, ond)
             noktalar[nokta] = {
                 "numune_1": _bicimle(n1), "numune_2": _bicimle(n2),

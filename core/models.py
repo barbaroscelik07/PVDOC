@@ -224,6 +224,9 @@ class EtkinMadde:
     """Üründeki bir etkin madde. Kullanıcı dinamik olarak ekler/çıkarır."""
     ad: str                           # "Etkin madde 1" veya gerçek INN
     impuriteler: list[Impurite] = field(default_factory=list)
+    # Enantiomerik impurite alt satırları (İlgili Bileşikler ile aynı yapı).
+    # Örn. [Impurite(ad='Linezolid R-İzomer', maksimum_deger=0.3, limit_metni='Maksimum % 0.3')]
+    enantiomerik: list[Impurite] = field(default_factory=list)
 
 
 # ----------------------------------------------------------------------------

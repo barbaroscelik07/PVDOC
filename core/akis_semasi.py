@@ -223,13 +223,26 @@ def akis_semasi_hazirla(proje) -> list[dict]:
                    tablet_ipk=getattr(kart, "tablet_ipk", {}),
                    ozel_test_kurallari=getattr(kart, "ozel_test_kurallari", {}))
 
+    # Akış şemasında etken adı öneki gösterilmez ("Linezolid Miktar Tayini" →
+    # "Miktar Tayini"). Etken adlarını topla.
+    etken_adlari = [(em.ad or "").strip() for em in kart.etkin_maddeler if (em.ad or "").strip()]
+    etken_adlari.sort(key=len, reverse=True)
+
+    def _oneki_temizle(ad: str) -> str:
+        for ea in etken_adlari:
+            if ad.startswith(ea + " "):
+                return ad[len(ea):].strip()
+        return ad
+
     ipk_map = {}        # operasyon -> [test adı]
     kimyasal_map = {}   # operasyon -> [test adı]
     for t in tablo6:
         op = t.operasyon
-        if getattr(t, "_impurite", False):
+        # Alt satırlar (impurite/enantiomerik/boyar alt başlıkları) akışta GÖSTERİLMEZ;
+        # yalnızca grup başlıkları (İlgili Bileşikler, Enantiomerik İmpurite, Boyar Madde) görünür.
+        if getattr(t, "_impurite", False) or getattr(t, "_boyar_alt", False):
             continue
-        ad = t.ad + ("*" if t.yildizli else "")
+        ad = _oneki_temizle(t.ad) + ("*" if t.yildizli else "")
         if t.ipk:
             ipk_map.setdefault(op, []).append(ad)
         else:

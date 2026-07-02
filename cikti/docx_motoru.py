@@ -218,44 +218,93 @@ def _doldur_formul(doc, proje: ProjeVerisi) -> None:
             return ""
         return f"{x:.{ond}f}".replace(".", ",")
 
+    # --- Yıldız gruplarını belirle ---
+    # Uçucu sıvılar TEK bir yıldız grubunu paylaşır (aynı 'Uçucudur' notu).
+    # Kaplama materyali AYRI bir yıldız grubu. Yıldız sayısı, grubun birim
+    # formülde İLK göründüğü sıraya göre atanır (ilk grup *, ikinci grup **).
+    ilk_ucucu_idx = None
+    ilk_kaplama_idx = None
+    for i, h in enumerate(proje.hammaddeler):
+        if getattr(h, "ucucu_sivi", False) and ilk_ucucu_idx is None:
+            ilk_ucucu_idx = i
+        if (getattr(h, "kaplama_yildiz", 0) or "kaplama materyali" in (h.ad or "").lower()) \
+           and ilk_kaplama_idx is None:
+            ilk_kaplama_idx = i
+    # Gruplara yıldız sayısı ata (önce gelen 1 yıldız, sonraki 2)
+    gruplar = []
+    if ilk_ucucu_idx is not None:
+        gruplar.append(("ucucu", ilk_ucucu_idx))
+    if ilk_kaplama_idx is not None:
+        gruplar.append(("kaplama", ilk_kaplama_idx))
+    gruplar.sort(key=lambda x: x[1])
+    yildiz_say = {}  # grup adı -> yıldız sayısı
+    for n, (grup, _idx) in enumerate(gruplar, 1):
+        yildiz_say[grup] = n
+
     son = len(proje.hammaddeler) - 1
+    var_km = False
+    var_uy = False
     idxler = _veri_satirlarini_ayarla(t, 1, len(proje.hammaddeler))
     for sira, (ri, h) in enumerate(zip(idxler, proje.hammaddeler)):
         cells = t.rows[ri].cells
         bold = h.ara_toplam or (sira == son)
-        # Madde adı: kaplama yıldızı adın yanında kalır (örn. "Kaplama Materyali*")
-        ad = h.ad
-        hucre_yaz(cells[0], ad, bold=bold)
+        # Ad (temiz) + yıldız
+        ad = (h.ad or "").rstrip("*").strip()
+        if getattr(h, "ucucu_sivi", False) and "ucucu" in yildiz_say:
+            ad = ad + "*" * yildiz_say["ucucu"]
+        elif ("kaplama materyali" in ad.lower() or getattr(h, "kaplama_yildiz", 0)) \
+             and "kaplama" in yildiz_say:
+            ad = ad + "*" * yildiz_say["kaplama"]
+            h.kaplama_yildiz = yildiz_say["kaplama"]
+        # Ad hücresi SOLA dayalı
+        hucre_yaz(cells[0], ad, bold=bold, hiza="sol")
         hucre_yaz(cells[1], h.fonksiyon, bold=bold)
-        # Birim Formül: virgülden sonra 3 hane
-        hucre_yaz(cells[2], _vf(h.birim_formul, 3), bold=bold)
-        # % İçerik: virgülden sonra 2 hane
-        hucre_yaz(cells[3], _vf(h.yuzde_icerik, 2), bold=bold)
-        # Seri Boyu: 3 hane + üst-karakter numara (etken/potens ayarlayıcı için)
+        # Uçucu sıvı: birim formül = k.m., % içerik = U.Y.
+        if getattr(h, "ucucu_sivi", False):
+            hucre_yaz(cells[2], "k.m.", bold=bold); var_km = True
+            hucre_yaz(cells[3], "U.Y.", bold=bold); var_uy = True
+        else:
+            hucre_yaz(cells[2], _vf(h.birim_formul, 3), bold=bold)
+            hucre_yaz(cells[3], _vf(h.yuzde_icerik, 2), bold=bold)
+        # Seri Boyu: 3 hane + üst-karakter numara
         seri_txt = _vf(h.seri_miktar, 3)
         if h.ust_numara and h.ust_numara in _USTLER:
             seri_txt = seri_txt + _USTLER[h.ust_numara]
         hucre_yaz(cells[4], seri_txt, bold=bold)
 
-    # --- Tablo altı notlar (Tablo 1'in hemen ardına, bir kez) ---
+    # --- Tablo altı notlar (bir kez) ---
     if not getattr(proje, "_formul_notlari_yazildi", False):
-        _formul_notlari_ekle(doc, proje, _USTLER, tablo=t)
+        # Şablonun SABİT (taslak) notlarını temizle (sadece ilk çağrıda)
+        import re as _re2
+        for p in list(doc.paragraphs):
+            tx = (p.text or "").strip()
+            if _re2.match(r"^\*+\s*:\s*Uçucudur", tx) or \
+               _re2.match(r"^k\.m\.\s*:\s*kafi miktarda", tx) or \
+               _re2.match(r"^U\.Y\.\s*:\s*Uygulama yoktur", tx):
+                p._p.getparent().remove(p._p)
+        _formul_notlari_ekle(doc, proje, _USTLER, tablo=t,
+                             yildiz_say=yildiz_say, var_km=var_km, var_uy=var_uy)
         proje._formul_notlari_yazildi = True
 
 
-def _formul_notlari_ekle(doc, proje, _USTLER, tablo=None):
+def _formul_notlari_ekle(doc, proje, _USTLER, tablo=None, yildiz_say=None,
+                         var_km=False, var_uy=False):
     """
-    Birim formül tablosunun ALTINA notları ekler (kaplama bileşimi, potens,
-    potens ayarlayıcı). tablo verilirse notlar tablonun hemen ardına eklenir.
+    Birim formül tablosunun ALTINA notları ekler:
+      - Uçucu sıvı notu (*/**): 'Uçucudur, birim ağırlığında yer almaz.'
+      - Kaplama materyali bileşimi (*/**)
+      - k.m.: kafi miktarda   (sadece tabloda k.m. varsa)
+      - U.Y.: Uygulama yoktur (sadece tabloda U.Y. varsa)
+      - Potens ve potens ayarlayıcı notları (¹, ²)
+    Notlar tablonun hemen ardına eklenir.
     """
-    from docx.oxml.ns import qn as _qn
+    yildiz_say = yildiz_say or {}
     seri_nolar = [s.seri_no for s in proje.seriler if s.seri_no]
     if len(seri_nolar) > 1:
         seri_metin = ", ".join(seri_nolar[:-1]) + " ve " + seri_nolar[-1]
     else:
         seri_metin = seri_nolar[0] if seri_nolar else ""
 
-    # Notları tablonun hemen ardına eklemek için ekleme noktası
     anchor = tablo._tbl if tablo is not None else None
     olusturulan = []
 
@@ -267,11 +316,23 @@ def _formul_notlari_ekle(doc, proje, _USTLER, tablo=None):
         olusturulan.append(p._p)
         return p
 
+    # Uçucu sıvı notu (tek satır, yıldız sayısına göre)
+    if "ucucu" in yildiz_say:
+        y = "*" * yildiz_say["ucucu"]
+        _not_para(f"{y}: Uçucudur, birim ağırlığında yer almaz.")
+
     # Kaplama materyali bileşimi notu (yıldız sayısına göre)
     for h in proje.hammaddeler:
         if getattr(h, "kaplama_yildiz", 0) and h.kaplama_bilesimi:
             yildiz = "*" * h.kaplama_yildiz
             _not_para(f"{yildiz}: Kaplama Materyali Bileşimi (% a/a) : {h.kaplama_bilesimi}")
+            break
+
+    # k.m. / U.Y. notları (sadece tabloda kullanıldıysa)
+    if var_km:
+        _not_para("k.m.: kafi miktarda")
+    if var_uy:
+        _not_para("U.Y.: Uygulama yoktur")
 
     # Potens notları (etken maddeler) + fazlalık toplamı
     fazlalik_toplam = 0.0
@@ -1015,7 +1076,8 @@ def _agirlik_spek_yaz(hucre, test):
         p = hucre.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         run = p.add_run(s)
-        run.font.size = Pt(8)
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(11)
 
 
 def _ekle_sonuc_agirlik(doc, proje, test, no):
@@ -1365,6 +1427,28 @@ def _doldur_genel_degerlendirme(doc, proje: ProjeVerisi) -> None:
             if not t.rows[1].cells[0].text.strip():
                 _hucre_kalin_yaz(t.rows[1].cells[0], yorum)
 
+    # Genel Değerlendirme bölümü TEK sayfada ve başlık sayfanın EN ÜSTÜNDE olsun:
+    # başlık paragrafına 'sayfa öncesi kesme' (page-break-before) ekle; tabloların
+    # satırlarını bölünmez yap (cantSplit) böylece bölüm alt sayfaya sarkmaz.
+    from docx.oxml.ns import qn as _qn
+    from docx.oxml import OxmlElement as _Ox
+    for p in doc.paragraphs:
+        if _kucuk(p.text.strip()).startswith("genel değerlendirme") or \
+           _kucuk(p.text.strip()).startswith("genel degerlendirme"):
+            pPr = p._p.get_or_add_pPr()
+            pb = pPr.find(_qn("w:pageBreakBefore"))
+            if pb is None:
+                pb = _Ox("w:pageBreakBefore"); pPr.append(pb)
+            kn = _Ox("w:keepNext"); pPr.append(kn)
+            break
+    # Genel Değerlendirme tablolarının satırları bölünmesin
+    for t in doc.tables:
+        b = _kucuk((t.rows[0].cells[0].text or "").strip())
+        if b.startswith(("sapmalar", "sonuçlar ve değerlendirme", "yorum")):
+            for row in t.rows:
+                trPr = row._tr.get_or_add_trPr()
+                trPr.append(_Ox("w:cantSplit"))
+
 
 def _hucre_kalin_yaz(cell, metin):
     """Genel Değerlendirme hücresine kalın, Times New Roman metin yazar."""
@@ -1573,6 +1657,38 @@ def _revizyon_no_guncelle(doc, revizyon_no: str) -> None:
                             _son_sayiyi_degistir(cell)
 
 
+def _revizyon_tarihi_guncelle(doc, tarih: str) -> None:
+    """Header/footer'daki 'Revizyon Tarihi' hücresindeki değeri (U.Y. veya tarih)
+    kullanıcının girdiği tarihle değiştirir."""
+    if not tarih:
+        return
+    tarih = str(tarih).strip()
+    import re as _re
+    # Değer deseni: gg.aa.yyyy veya U.Y.
+    def _deger_degistir(cell):
+        for p in cell.paragraphs:
+            for r in p.runs:
+                t = r.text.strip()
+                if _re.match(r"^\d{2}\.\d{2}\.\d{4}$", t) or t in ("U.Y.", "U.Y", "UY"):
+                    if t != tarih:
+                        r.text = r.text.replace(t, tarih)
+
+    for section in doc.sections:
+        for hf in (section.header, section.footer):
+            for t in hf.tables:
+                tar_col = None
+                for row in t.rows:
+                    for ci, cell in enumerate(row.cells):
+                        if "revizyon tarih" in _kucuk(cell.text) or "date of revision" in _kucuk(cell.text):
+                            _deger_degistir(cell)
+                            tar_col = ci
+                if tar_col is not None and len(t.rows) >= 2:
+                    for row in t.rows:
+                        cell = row.cells[tar_col]
+                        if "revizyon" not in _kucuk(cell.text) and "date" not in _kucuk(cell.text):
+                            _deger_degistir(cell)
+
+
 def _placeholder_eslemeleri(proje: ProjeVerisi, rapor: bool) -> dict[str, str]:
     d = proje.dokuman
     urun = _urun(proje)
@@ -1592,12 +1708,15 @@ def _placeholder_eslemeleri(proje: ProjeVerisi, rapor: bool) -> dict[str, str]:
         sno = proje.seriler[i].seri_no
         if sno:
             es[f"yyy-P0{i+1}"] = sno
+
+    # Amaç metnindeki firma ifadesi: '{Firma ismi} İlaç üretim fabrikasında' →
+    # 'Neutec İlaç üretim fabrikasında' (çift 'İlaç' oluşmasını önle).
+    es["{Firma ismi} İlaç üretim fabrikasında"] = "Neutec İlaç üretim fabrikasında"
+    es["{Firma ismi} İlaç"] = "Neutec İlaç"
     if d.firma_ismi:
         es["{Firma ismi}"] = d.firma_ismi
 
-    # --- Kapsam / Sorumluluk / Kaydedilme metinleri (PVP vs PVR tense farkı) ---
-    # Şablon PVP metnini (gelecek zaman) içerir; PVR'de geçmiş zamana çevrilir.
-    # Sorumluluk metni her ikisinde de "dağılımları aşağıdaki gibidir." olur.
+    # --- Kapsam / Sorumluluk / Kaydedilme / Amaç metinleri (PVP vs PVR tense) ---
     es["sorumluluk dağılımları sayfa 5’teki gibidir."] = \
         "sorumluluk dağılımları aşağıdaki gibidir."
     es["sorumluluk dağılımları sayfa 5'teki gibidir."] = \
@@ -1608,6 +1727,8 @@ def _placeholder_eslemeleri(proje: ProjeVerisi, rapor: bool) -> dict[str, str]:
         es["Raporunda verilen tablolara kaydedilecektir."] = \
             "Raporunda verilen tablolara kaydedilmiştir."
         es["tablolara kaydedilecektir."] = "tablolara kaydedilmiştir."
+        es["üretim fabrikasında gerçekleştirilecektir."] = \
+            "üretim fabrikasında gerçekleştirilmiştir."
     return es
 
 
@@ -2307,6 +2428,11 @@ def _doldur_uretim_yontemi(doc, proje: ProjeVerisi) -> None:
         yp = OxmlElement("w:p")
         sonra_el.addnext(yp)
         para = Paragraph(yp, capa_parent)
+        # Başlık (bold) paragrafı: sonraki paragrafla (metniyle) AYNI sayfada kalsın
+        if bold:
+            pPr = yp.get_or_add_pPr()
+            kn = OxmlElement("w:keepNext"); pPr.append(kn)
+            kl = OxmlElement("w:keepLines"); pPr.append(kl)
         run = para.add_run(metin)
         run.bold = bold
         run.font.name = "Times New Roman"
@@ -2378,6 +2504,7 @@ def _ortak_doldur(doc, proje: ProjeVerisi, rapor: bool) -> None:
     proje._formul_notlari_yazildi = False
     belgede_degistir(doc, _placeholder_eslemeleri(proje, rapor))
     _revizyon_no_guncelle(doc, proje.dokuman.revizyon_no)
+    _revizyon_tarihi_guncelle(doc, proje.dokuman.revizyon_tarihi)
     _doldur_formul(doc, proje)
     _doldur_kapsanan(doc, proje)
     _doldur_risk(doc, proje)

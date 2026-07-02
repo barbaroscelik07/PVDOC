@@ -17,6 +17,7 @@ OP_NO = {"Karıştırma": 2, "Tablet Baskı": 3, "Film Kaplama": 4,
          "Dolum": 3, "Blisterleme": 5}
 
 SABIT_KARISIM_SPEK = "%85 – %115"
+SABIT_ICERIK_SPEK = "Kabul Değeri (AV) ≤ L1 (L1=15,0)"
 BILGI = "Bilgi amaçlıdır."
 ASINMA_SPEK = "Maksimum %1.0"
 TABLET_DAGILMA = "Maksimum 15 dakika"
@@ -92,19 +93,30 @@ def taninmayan_testler(bitmis_testler) -> list:
 
 
 def _ozel_kuralli_ekle(cikti, bitmis_testler, ozel_kurallar):
-    """Özel kuralı olan tanımsız testleri ilgili aşamalara dağıtır."""
+    """Özel kuralı olan tanımsız testleri ilgili aşamalara dağıtır.
+    Aynı (test adı + operasyon) çifti asla iki kez eklenmez (çift yazım önlenir)."""
     if not ozel_kurallar:
         return
+    _eklenen = set()
+    # Mevcut çıktıdaki (ad, op) çiftlerini de topla ki kuralla çift olmasın
+    for t in cikti:
+        _eklenen.add((_norm(t.ad), _norm(t.operasyon or "")))
     for t in bitmis_testler:
         kural = ozel_kurallar.get(t.ad)
         if not kural:
             continue
         spek = kural.get("spek") or (t.spesifikasyon.spesifikasyon_metni
                                      or t.spesifikasyon.metni_olustur())
-        for op in kural.get("asamalar", []):
+        # asamalar listesini tekrarsız yap (sıra korunarak)
+        asamalar = list(dict.fromkeys(kural.get("asamalar", [])))
+        for op in asamalar:
+            anahtar = (_norm(t.ad), _norm(op))
+            if anahtar in _eklenen:
+                continue  # bu test bu aşamada zaten var
             yildiz = op in kural.get("yildiz", [])
             cikti.append(_yeni(t.ad, op, TabloTipi.TEK_SONUC, spek,
                                ipk=kural.get("ipk", False), yildiz=yildiz))
+            _eklenen.add(anahtar)
 
 
 def turet(bitmis_testler, etkin_maddeler, operasyonlar,
@@ -270,10 +282,14 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
             mik = _bul(bitmis_testler, "miktar", etken=em)
             cikti.append(_yeni(f"{em} Miktar Tayini", "Tablet Baskı", TabloTipi.IKI_NUMUNE,
                                kaynak_spek=(mik.spesifikasyon if mik else None)))
+            # İçerik Tekdüzeliği HER ZAMAN eklenir (yıldızlı), Miktar Tayini'nden
+            # hemen sonra. Bitmiş üründe tanımlıysa onun speki, yoksa AV varsayılanı.
             icerik = _bul(bitmis_testler, "içerik tekdüzeliği", etken=em)
-            if icerik:
-                cikti.append(_yeni(f"{em} İçerik Tekdüzeliği", "Tablet Baskı", TabloTipi.TEK_SONUC,
-                                   kaynak_spek=icerik.spesifikasyon))
+            ic_spek = icerik.spesifikasyon if icerik else None
+            it = _yeni(f"{em} İçerik Tekdüzeliği", "Tablet Baskı", TabloTipi.TEK_SONUC,
+                       SABIT_ICERIK_SPEK if ic_spek is None else "",
+                       kaynak_spek=ic_spek, yildiz=True)
+            cikti.append(it)
             dis = _bul(bitmis_testler, "dissol", etken=em)
             if dis:
                 cikti.append(_yeni(f"{em} Dissolüsyon", "Tablet Baskı", TabloTipi.BOS_NOKTA,
@@ -301,6 +317,12 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
             mik = _bul(bitmis_testler, "miktar", etken=em)
             cikti.append(_yeni(f"{em} Miktar Tayini", "Film Kaplama", TabloTipi.IKI_NUMUNE,
                                kaynak_spek=(mik.spesifikasyon if mik else None)))
+            # İçerik Tekdüzeliği HER ZAMAN (yıldızlı), Miktar Tayini'nden sonra
+            icerik = _bul(bitmis_testler, "içerik tekdüzeliği", etken=em)
+            ic_spek = icerik.spesifikasyon if icerik else None
+            cikti.append(_yeni(f"{em} İçerik Tekdüzeliği", "Film Kaplama", TabloTipi.TEK_SONUC,
+                               SABIT_ICERIK_SPEK if ic_spek is None else "",
+                               kaynak_spek=ic_spek, yildiz=True))
             dis = _bul(bitmis_testler, "dissol", etken=em)
             if dis:
                 cikti.append(_yeni(f"{em} Dissolüsyon", "Film Kaplama", TabloTipi.BOS_NOKTA,
@@ -326,11 +348,38 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
                "Dolum": 3, "Blisterleme": 5}
     cikti.sort(key=lambda t: op_sira.get(t.operasyon, 99))
 
-    # Her aşamada Mikrobiyolojik Kontrol HER ZAMAN son sırada olmalı (Nem gibi
-    # sonradan eklenen testler mikrobiyolojiden önce gelsin). Aşama içi diğer
-    # sıra korunarak mikrobiyolojik testler aşama sonuna taşınır.
+    # Her aşamada kimyasal test sırası düzeltmesi:
+    #   ... Dissolüsyon → (Nem, Boyar Madde) → İlgili Bileşikler(+alt) →
+    #   Enantiomerik(+alt) → Mikrobiyolojik(son).
+    # İPK testleri ve grup başlığı+alt satır blokları bozulmadan taşınır.
     def _mikro_mu(t):
         return getattr(t, "mikrobiyolojik", False) or "mikrobiyolojik" in _norm(t.ad)
+
+    def _grup_anahtar(t):
+        """Bir testi kimyasal sıralama grubuna eşler (İPK ise None → yerinde kalır)."""
+        if getattr(t, "ipk", False):
+            return None
+        a = _norm(t.ad)
+        if _mikro_mu(t):
+            return 9
+        if getattr(t, "_enantiomerik", False) or "enantiomerik" in a:
+            return 8
+        if getattr(t, "_impurite", False) or "ilgili bilesik" in a:
+            return 7
+        if getattr(t, "_boyar", False) or "boyar madde" in a:
+            return 6
+        if "nem" in a:
+            return 5
+        if "dissol" in a:
+            return 4
+        if "icerik tekduzeligi" in a:
+            return 3
+        if "miktar tayini" in a:
+            return 2
+        if "teshis" in a or "karisim tekduzeligi" in a:
+            return 1
+        return None  # tanınmayan kimyasal → yerinde kalır
+
     yeniden = []
     i = 0
     n = len(cikti)
@@ -339,9 +388,30 @@ def turet(bitmis_testler, etkin_maddeler, operasyonlar,
         grup = []
         while i < n and cikti[i].operasyon == op:
             grup.append(cikti[i]); i += 1
-        mikrolar = [t for t in grup if _mikro_mu(t)]
-        digerleri = [t for t in grup if not _mikro_mu(t)]
-        yeniden.extend(digerleri + mikrolar)
+        # Kimyasal testleri sabit sıraya diz; İPK ve grup-başlık+alt bloklarını koru.
+        # Blok oluştur: grup başlığı + ardışık alt satırlar bir arada.
+        bloklar = []
+        j = 0
+        while j < len(grup):
+            t = grup[j]
+            blok = [t]
+            if getattr(t, "_grup_baslik", False):
+                k = j + 1
+                while k < len(grup) and (getattr(grup[k], "_impurite", False)
+                                          or getattr(grup[k], "_boyar_alt", False)):
+                    blok.append(grup[k]); k += 1
+                j = k
+            else:
+                j += 1
+            bloklar.append(blok)
+        # Sıralama anahtarı: İPK (None) olanlar yerinde; kimyasal olanlar gruba göre
+        def _blok_sira(idx_blok):
+            idx, blok = idx_blok
+            ga = _grup_anahtar(blok[0])
+            return (1, ga, idx) if ga is not None else (0, 0, idx)
+        sirali = [b for _, b in sorted(enumerate(bloklar), key=_blok_sira)]
+        for blok in sirali:
+            yeniden.extend(blok)
     return yeniden
 
 

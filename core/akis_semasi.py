@@ -15,6 +15,14 @@ import re
 
 from core.kural_motoru import turet
 
+
+def _norm(s: str) -> str:
+    """Türkçe-güvenli küçük harf normalize (test adı karşılaştırmaları için)."""
+    tr = str.maketrans({"ı": "i", "İ": "i", "ş": "s", "Ş": "s", "ğ": "g",
+                        "Ğ": "g", "ü": "u", "Ü": "u", "ö": "o", "Ö": "o",
+                        "ç": "c", "Ç": "c", "I": "i"})
+    return (s or "").translate(tr).lower().strip()
+
 # Akış şemasında gösterilecek operasyon sırası ve görünen ad
 _OP_SIRA = [
     ("Karıştırma", "Karıştırma"),
@@ -263,6 +271,24 @@ def akis_semasi_hazirla(proje) -> list[dict]:
             ipk_map.setdefault(op, []).append(ad)
         else:
             kimyasal_map.setdefault(op, []).append(ad)
+
+    # Kimyasal analizleri SABİT sıraya göre diz: Teşhis → Tekdüzeliği (Karışım/
+    # İçerik) → Miktar Tayini → Dissolüsyon → Nem → Boyar Madde → İlgili
+    # Bileşikler → Enantiomerik İmpurite → Mikrobiyolojik Kontrol.
+    def _kim_sira(ad):
+        a = _norm(ad)
+        oncelik = [
+            ("teshis", 1), ("karisim tekduzeligi", 2),
+            ("miktar tayini", 3), ("icerik tekduzeligi", 4), ("dissol", 5),
+            ("nem", 6), ("boyar madde", 7),
+            ("ilgili bilesik", 8), ("enantiomerik", 9), ("mikrobiyolojik", 10),
+        ]
+        for anahtar, sira in oncelik:
+            if anahtar in a:
+                return sira
+        return 50
+    for op in kimyasal_map:
+        kimyasal_map[op].sort(key=_kim_sira)
 
     kutular = []
     for op_anahtar, op_ad in _OP_SIRA:

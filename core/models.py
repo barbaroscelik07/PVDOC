@@ -224,7 +224,10 @@ class Hammadde:
     ust_numara: Optional[int] = None  # seri boyu yanındaki üst-karakter numarası (¹,²…)
     # Kaplama materyali yıldız sayısı (0=yok); % bileşenler kaplama_bilesimi'nde
     kaplama_yildiz: int = 0
-    kaplama_bilesimi: str = ""        # "Polivinil alkol (E1203) (%44,00), ..." 
+    kaplama_bilesimi: str = ""        # "Polivinil alkol (E1203) (%44,00), ..."
+    # Uçucu sıvı (deiyonize su, etil alkol vb.): isim sonuna *, birim formül k.m.,
+    # % içerik U.Y. Otomatik tespit edilir (sıvı kütüphanesi).
+    ucucu_sivi: bool = False
 
 
 @dataclass
@@ -380,12 +383,12 @@ class Diyagram:
 @dataclass
 class DokumanBilgisi:
     """Şablon başlığı / alt bilgi alanları. Doküman no formatı firmaya özgü, kullanıcı girer."""
-    firma_ismi: str = ""
+    firma_ismi: str = "NEUTEC İLAÇ"
     urun_adi: str = ""                # "Xxx Film Kaplı Tablet"
     pvp_dokuman_no: str = ""          # "AG-PV-xxx"
     pvr_dokuman_no: str = ""          # "AG-PV-xxx-R"
     revizyon_no: str = "03"           # otomatik 03; kullanıcı değiştirebilir
-    revizyon_tarihi: str = UYGULAMA_YOK
+    revizyon_tarihi: str = "16.03.2022"  # otomatik; kullanıcı değiştirebilir
     # PVP ve PVR için AYRI form numaraları. Otomatik varsayılanlar; kullanıcı
     # genel bilgi sayfasından değiştirebilir.
     pvp_form_no: str = "N-15-506"

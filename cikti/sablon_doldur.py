@@ -72,26 +72,33 @@ def satir_klonla(tablo: Table, kaynak_index: int = -1) -> _Row:
     return tablo.rows[-1]
 
 
-def hucre_yaz(cell, metin: str, bold: bool | None = None) -> None:
+def hucre_yaz(cell, metin: str, bold: bool | None = None, hiza: str | None = None) -> None:
     """
     Hücreye metin yazar; ilk run'ın biçimini (font) korur, kalan run'ları VE
     fazla paragrafları siler (eski şablon içeriği kalmaz).
     bold None ise mevcut bold durumu korunur. Yeni run Times New Roman olur.
+    hiza: 'sol' | 'orta' | 'sag' | None (dokunma).
     """
     from docx.shared import Pt as _Pt, RGBColor as _RGB
+    from docx.enum.text import WD_ALIGN_PARAGRAPH as _AL
     p = cell.paragraphs[0]
     for ekstra in cell.paragraphs[1:]:
         ekstra._p.getparent().remove(ekstra._p)
+    if hiza == "sol":
+        p.alignment = _AL.LEFT
+    elif hiza == "orta":
+        p.alignment = _AL.CENTER
+    elif hiza == "sag":
+        p.alignment = _AL.RIGHT
     if p.runs:
         p.runs[0].text = str(metin)
         if bold is not None:
             p.runs[0].bold = bold
         for r in p.runs[1:]:
             r.text = ""
-        # font yine de Times New Roman'a sabitle (Calibri kaçaklarını önle)
         if not p.runs[0].font.name:
             p.runs[0].font.name = "Times New Roman"
-        p.runs[0].font.color.rgb = _RGB(0, 0, 0)  # her zaman siyah
+        p.runs[0].font.color.rgb = _RGB(0, 0, 0)
     else:
         r = p.add_run(str(metin))
         r.font.name = "Times New Roman"

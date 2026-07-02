@@ -54,12 +54,12 @@ class GenelBilgiModulu(QWidget):
             s += 1
             return le
 
-        self.in_firma = satir("Firma İsmi:", "örn. {Firma ismi}")
+        self.in_firma = satir("Firma İsmi:", "NEUTEC İLAÇ")
         self.in_urun = satir("Ürün Adı:", "örn. Xxx Film Kaplı Tablet")
         self.in_pvp_no = satir("PVP Doküman No:", "örn. AG-PV-xxx")
         self.in_pvr_no = satir("PVR Doküman No:", "örn. AG-PV-xxx-R")
         self.in_rev_no = satir("Revizyon No:", "03")
-        self.in_rev_tarih = satir("Revizyon Tarihi:", "U.Y.")
+        self.in_rev_tarih = satir("Revizyon Tarihi:", "16.03.2022")
         self.in_pvp_form_no = satir("PVP Form No:", "N-15-506")
         self.in_pvr_form_no = satir("PVR Form No:", "N-15-507")
 

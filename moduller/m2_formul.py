@@ -125,7 +125,9 @@ class FormulModulu(QWidget):
 
     def _birim_formul_sorulari(self) -> None:
         """
-        Word'den birim formül yapıştırıldıktan sonra otomatik sorular:
+        Word'den birim formül yapıştırıldıktan sonra otomatik işlemler:
+          0) Uçucu sıvı tespiti (kütüphane): deiyonize su, etil alkol, izopropil
+             alkol vb. → isim sonuna *, birim formül k.m., % içerik U.Y.
           1) Her etkin madde için potens (tartım = seri×100/potens; not eklenir).
           2) Potens ayarlayıcı hammadde (fazlalık buradan düşülür; not eklenir).
           3) 'Kaplama Materyali*' (yıldızlı) için % bileşen listesi (tablo altı not).
@@ -133,12 +135,14 @@ class FormulModulu(QWidget):
         from PyQt6.QtWidgets import QInputDialog, QMessageBox
         hammaddeler = self.proje.hammaddeler
 
-        # --- Etkin maddeleri tespit et: fonksiyon 'etkin/aktif' içeren satırlar ---
+        # 0) Uçucu sıvı tespiti
+        self._ucucu_sivilari_isaretle()
+
+        # --- Etkin maddeleri tespit et ---
         etkenler = [h for h in hammaddeler
                     if "etkin" in (h.fonksiyon or "").lower()
                     or "aktif" in (h.fonksiyon or "").lower()]
         if not etkenler:
-            # Fonksiyon boşsa kullanıcıya sor: hangi satırlar etken?
             adlar = [h.ad for h in hammaddeler if h.ad and not h.ara_toplam]
             if adlar:
                 sec, ok = QInputDialog.getItem(
@@ -147,7 +151,6 @@ class FormulModulu(QWidget):
                 if ok and sec:
                     etkenler = [h for h in hammaddeler if h.ad == sec]
 
-        # 1) Potens sor + üst-numara ata (1, 2, ...)
         numara = 1
         for h in etkenler:
             h.etken = True
@@ -159,7 +162,6 @@ class FormulModulu(QWidget):
                 h.ust_numara = numara
                 numara += 1
 
-        # 2) Potens ayarlayıcı hammadde sor
         aday = [h.ad for h in hammaddeler if h.ad and not h.ara_toplam and not h.etken]
         if aday and etkenler:
             sec, ok = QInputDialog.getItem(
@@ -172,24 +174,47 @@ class FormulModulu(QWidget):
                         h.ust_numara = numara
                         numara += 1
 
-        # 3) Kaplama Materyali* (yıldızlı) için % bileşen listesi sor
+        # 3) Kaplama Materyali* için % bileşen listesi
         for h in hammaddeler:
-            yildiz = (h.ad or "").count("*")
-            if yildiz and "kaplama materyali" in (h.ad or "").lower():
-                h.kaplama_yildiz = yildiz
+            if "kaplama materyali" in (h.ad or "").lower().rstrip("*").strip() + " " \
+               or "kaplama materyali" in (h.ad or "").lower():
                 metin, ok = QInputDialog.getMultiLineText(
                     self, "Kaplama Materyali Bileşimi",
                     f"{h.ad} % bileşen listesini girin\n"
                     "(örn: Polivinil alkol (E1203) (%44,00), Talk (E553b) (%20,00), ...):",
-                    "")
+                    h.kaplama_bilesimi)
                 if ok and metin.strip():
                     h.kaplama_bilesimi = metin.strip()
+                    if not h.kaplama_yildiz:
+                        h.kaplama_yildiz = 1  # gerçek numara çıktıda hesaplanır
 
         self._verilerden_doldur()
         QMessageBox.information(
             self, "Birim Formül Hazır",
-            "Potens, potens ayarlayıcı ve kaplama bilgileri kaydedildi.\n"
+            "Uçucu sıvılar, potens ve kaplama bilgileri kaydedildi.\n"
             "Çıktıda tablo altına ilgili notlar otomatik yazılacak.")
+
+    # Birim formüllerde sık kullanılan uçucu sıvılar (kütüphane)
+    UCUCU_SIVILAR = [
+        "deiyonize su", "saf su", "distile su", "arıtılmış su",
+        "etil alkol", "etanol", "izopropil alkol", "izopropanol",
+        "metilen klorür", "diklorometan", "aseton", "kloroform",
+        "propilen glikol", "gliserin", "gliserol", "sıvı parafin",
+    ]
+
+    def _ucucu_sivilari_isaretle(self) -> None:
+        """Birim formüldeki uçucu sıvıları kütüphaneye göre işaretler."""
+        def _n(s):
+            tr = str.maketrans({"ı":"i","İ":"i","ş":"s","Ş":"s","ğ":"g","Ğ":"g",
+                                "ü":"u","Ü":"u","ö":"o","Ö":"o","ç":"c","Ç":"c","I":"i"})
+            return (s or "").translate(tr).lower().strip()
+        for h in self.proje.hammaddeler:
+            ad_n = _n(h.ad).rstrip("*").strip()
+            if any(sivi in ad_n for sivi in self.UCUCU_SIVILAR):
+                h.ucucu_sivi = True
+
+    def _panodan_yapistir_bitti(self):
+        pass
 
     def _toplam_ekle(self) -> None:
         self.proje.hammaddeler.append(Hammadde(ad="Katman Ağırlık", ara_toplam=True))
